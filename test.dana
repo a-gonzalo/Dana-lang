@@ -1,0 +1,9 @@
+node Adder {
+    in input: Int
+    out result: Int
+    
+    process: (input) => {
+        let res = input + 10
+        emit result(res)
+    }
+}

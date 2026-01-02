@@ -126,6 +126,6 @@ fn run_program(path: PathBuf, trigger: Option<String>, val_str: Option<String>) 
 
     scheduler.run()?;
     
-    println!("Execution finished.");
+    println!("Execution finished correctly");
     Ok(())
 }

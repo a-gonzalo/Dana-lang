@@ -1,0 +1,10 @@
+node HelloWorld {
+    in trigger: Unit
+    out msg: String
+    
+    process: (trigger) => {
+        emit msg("Hello, World!")
+    }
+}
+
+HelloWorld.msg -> System.IO.stdout

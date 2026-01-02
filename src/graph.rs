@@ -41,6 +41,32 @@ impl ExecutableGraph {
         let mut graph = DiGraph::new();
         let mut node_map = HashMap::new();
 
+        // Pre-register Standard Library Nodes
+        
+        // System.IO
+        {
+            let name = "System.IO".to_string();
+            if !node_map.contains_key(&name) {
+                let mut input_ports = HashMap::new();
+                input_ports.insert("stdout".to_string(), DanaType::String); // Accepting String (auto-converted)
+                
+                let output_ports = HashMap::new();
+                // input_ports.insert("stdin".to_string(), DanaType::String); 
+                
+                let rt_node = RuntimeNode::new_native(
+                    name.clone(),
+                    NodeIndex::new(0),
+                    input_ports,
+                    output_ports,
+                    Box::new(crate::stdlib::io::SystemIONode),
+                );
+                
+                let idx = graph.add_node(rt_node);
+                graph[idx].index = idx;
+                node_map.insert(name, idx);
+            }
+        }
+
         // 1. Add all nodes to the graph
         for ast_node in ast.nodes {
             if node_map.contains_key(&ast_node.name) {
@@ -68,7 +94,7 @@ impl ExecutableGraph {
                 }
             }
 
-            let rt_node = RuntimeNode::new(
+            let rt_node = RuntimeNode::new_dana(
                 ast_node.name.clone(),
                 NodeIndex::new(0), // Placeholder
                 input_ports,

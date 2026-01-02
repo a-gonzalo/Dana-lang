@@ -123,7 +123,8 @@ node_decl = {
 }
 
 // Port reference: NodeName.portName
-port_ref = { identifier ~ "." ~ identifier }
+// Port reference: NodeName.portName or Package.Node.portName
+port_ref = { identifier ~ ("." ~ identifier)+ }
 
 // Edge operators
 edge_sync = { "->" }

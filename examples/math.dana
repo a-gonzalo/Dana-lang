@@ -1,0 +1,16 @@
+node Calculator {
+    in val: Int
+    out res: Int
+    out res_str: String
+    
+    process: (val) => {
+        let doubled = val * 2
+        let squared = val * val
+        let result = doubled + squared
+        
+        emit res(result)
+        emit res_str("Calculation Result: " + result)
+    }
+}
+
+Calculator.res_str -> System.IO.stdout

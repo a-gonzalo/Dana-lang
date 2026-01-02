@@ -360,10 +360,11 @@ fn parse_precedence_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expre
             |_| ParseError::InvalidSyntax(format!("Invalid float: {}", pair.as_str())),
         )?)),
         Rule::string_literal => {
-            let content = pair.into_inner().next().ok_or_else(|| {
-                ParseError::InvalidSyntax("Empty string literal".to_string())
-            })?;
-            Ok(Expression::StringLiteral(content.as_str().to_string()))
+            let s = pair.as_str();
+            // Simplify parsing by just stripping quotes. 
+            // Proper unescaping would go here.
+            let content = &s[1..s.len()-1];
+            Ok(Expression::StringLiteral(content.to_string()))
         }
         Rule::bool_literal => {
             let val = pair.as_str() == "true";
@@ -444,19 +445,17 @@ fn parse_edge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Edge> {
 }
 
 fn parse_port_ref(pair: pest::iterators::Pair<Rule>) -> ParseResult<PortRef> {
-    let mut inner = pair.into_inner();
-    
-    let node = inner
-        .next()
-        .ok_or_else(|| ParseError::InvalidSyntax("Missing node in port reference".to_string()))?
-        .as_str()
-        .to_string();
-    
-    let port = inner
-        .next()
-        .ok_or_else(|| ParseError::InvalidSyntax("Missing port in port reference".to_string()))?
-        .as_str()
-        .to_string();
+    let mut parts: Vec<String> = pair
+        .into_inner()
+        .map(|p| p.as_str().to_string())
+        .collect();
+
+    if parts.len() < 2 {
+        return Err(ParseError::InvalidSyntax("Port reference must have at least Node.Port".to_string()));
+    }
+
+    let port = parts.pop().unwrap(); // Last one is port
+    let node = parts.join("."); // Rest is node name
 
     Ok(PortRef::new(node, port))
 }

@@ -1,9 +1,10 @@
-node Adder {
-    in input: Int
-    out result: Int
+node Source {
+    in start: Unit
+    out data: String
     
-    process: (input) => {
-        let res = input + 10
-        emit result(res)
+    process: (start) => {
+        emit data("Hello from Graph!")
     }
 }
+
+Source.data -> System.IO.stdout

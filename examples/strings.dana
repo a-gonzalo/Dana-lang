@@ -1,0 +1,12 @@
+node Greeter {
+    prefix: String = "Welcome, "
+    
+    in name: String
+    out greeting: String
+    
+    process: (name) => {
+        emit greeting(prefix + name + "!")
+    }
+}
+
+Greeter.greeting -> System.IO.stdout

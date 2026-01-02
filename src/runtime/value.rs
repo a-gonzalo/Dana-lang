@@ -24,7 +24,7 @@ impl fmt::Display for Value {
         match self {
             Value::Int(v) => write!(f, "{}", v),
             Value::Float(v) => write!(f, "{}", v),
-            Value::String(v) => write!(f, "\"{}\"", v),
+            Value::String(v) => write!(f, "{}", v),
             Value::Bool(v) => write!(f, "{}", v),
             Value::Byte(v) => write!(f, "{:#04x}", v),
             Value::Unit => write!(f, "()"),
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn test_value_display() {
         assert_eq!(Value::Int(42).to_string(), "42");
-        assert_eq!(Value::String("hello".to_string()).to_string(), "\"hello\"");
+        assert_eq!(Value::String("hello".to_string()).to_string(), "hello");
         assert_eq!(Value::Unit.to_string(), "()");
     }
 

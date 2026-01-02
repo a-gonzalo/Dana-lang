@@ -3,6 +3,7 @@ mod types;
 mod parser;
 mod graph;
 mod runtime;
+mod stdlib;
 
 use clap::{Parser, Subcommand};
 use std::fs;
@@ -91,14 +92,14 @@ fn run_program(path: PathBuf, trigger: Option<String>, val_str: Option<String>) 
     // 3. Run
     let mut scheduler = Scheduler::new(graph);
 
-    // Parse trigger "Node.Port"
+    // Parse trigger "Node.Port" or "Package.Node.Port"
     if let Some(trig) = trigger {
         let parts: Vec<&str> = trig.split('.').collect();
-        if parts.len() != 2 {
+        if parts.len() < 2 {
             return Err("Trigger must be in format Node.Port".to_string());
         }
-        let node = parts[0];
-        let port = parts[1];
+        let port = parts.last().unwrap();
+        let node = parts[0..parts.len()-1].join(".");
         
         let val = if let Some(s) = val_str {
             // Very basic parsing for now. TODO: improved value parsing
@@ -117,7 +118,7 @@ fn run_program(path: PathBuf, trigger: Option<String>, val_str: Option<String>) 
             Value::Unit
         };
 
-        scheduler.inject_event(node, port, val)?;
+        scheduler.inject_event(&node, *port, val)?;
     } else {
         println!("No trigger specified. Graph loaded but no events injected.");
         println!("Use --trigger Node.Port to start execution.");

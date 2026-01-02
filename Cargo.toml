@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Dana Language Team"]
 description = "A data-flow oriented, graph-based programming language"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [dependencies]
 # Parser

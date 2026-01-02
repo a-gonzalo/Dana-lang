@@ -4,7 +4,6 @@
 
 use crate::graph::ExecutableGraph;
 use crate::runtime::value::Value;
-use crate::runtime::node::ExecutionResult;
 use petgraph::graph::NodeIndex;
 use std::collections::VecDeque;
 use petgraph::Direction;

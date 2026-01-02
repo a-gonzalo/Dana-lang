@@ -5,7 +5,6 @@
 use crate::types::{DanaType, TypeError};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use thiserror::Error;
 
 /// A value at runtime
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

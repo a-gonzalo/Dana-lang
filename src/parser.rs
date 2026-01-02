@@ -218,7 +218,7 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<DanaType> {
 }
 
 fn parse_process_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<ProcessBlock> {
-    let mut inner = pair.into_inner();
+    let inner = pair.into_inner();
     
     // Parse parameter list
     let mut triggers = Vec::new();

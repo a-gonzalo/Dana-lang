@@ -1,4 +1,4 @@
-use crate::ast::{Graph as AstGraph, Node as AstNode, Edge as AstEdge, PortRef, EdgeType};
+use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType};
 use crate::types::{DanaType, TypeChecker, TypeError};
 use crate::runtime::node::RuntimeNode;
 use crate::runtime::value::Value;

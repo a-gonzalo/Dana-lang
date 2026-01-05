@@ -1,4 +1,4 @@
-use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType};
+use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType, PortRef};
 use crate::types::{DanaType, TypeChecker, TypeError};
 use crate::runtime::node::RuntimeNode;
 use crate::runtime::value::Value;
@@ -207,7 +207,7 @@ mod tests {
         assert!(result.is_ok());
         let graph = result.unwrap();
         
-        assert_eq!(graph.graph.node_count(), 2);
+        assert_eq!(graph.graph.node_count(), 3); // Source + Target + System.IO
         assert_eq!(graph.graph.edge_count(), 1);
     }
 

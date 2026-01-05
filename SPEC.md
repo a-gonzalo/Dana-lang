@@ -150,3 +150,94 @@ node HL7Parser {
     Node Wrapping: Cada nodo en el runtime debe estar envuelto en un Arc<Mutex<Node>> o usar un modelo de actores.
 
     Concurrency: Utilizar canales tokio::sync::mpsc para representar las aristas (edges) y permitir que los pulsos fluyan entre hilos de forma segura.
+
+
+------
+
+# Dana Language Specification v0.2
+## 1. El Modelo de Ejecución: El TraceID
+El TraceID (anteriormente denominado FlowContext ID) es el pilar de la ejecución asíncrona y la recursión en Dana.
+
+Definición: Es un identificador único y determinista generado automáticamente por el Runtime cuando un estímulo externo (un Impulse o un dato inicial) entra en el sistema a través del graph Main.
+
+Propagación: Todo token de datos que viaja por una arista lleva consigo el TraceID de su ejecución raíz.
+
+Aislamiento: Permite que múltiples instancias de una misma lógica (nodos) procesen datos diferentes simultáneamente sin colisiones de estado.
+
+Recursión Segura: Cuando un nodo se conecta a sí mismo (re-entrada topológica), el Runtime utiliza el TraceID para identificar que el pulso pertenece a la misma cadena de ejecución, permitiendo el rastreo de la pila (stack trace) y evitando bucles infinitos no controlados.
+
+## 2. Tipos de Datos
+### 2.1 Tipos Primitivos (Core)
+Implementados nativamente en el motor de Rust para garantizar rendimiento:
+
+Int / Float: Números de 64 bits.
+
+String: Cadenas UTF-8.
+
+Bool: true o false.
+
+Impulse: Pulso de activación sin carga de datos.
+
+List<T>: Colección dinámica homogénea. Fundamental para la iteración y el procesamiento por lotes (batching).
+
+Bytes: Buffer de datos crudos para operaciones de I/O y FFI.
+
+### 2.2 Tipos Estructurados (type)
+Definiciones de usuario para agrupar datos:
+```dana
+type GenomicRead {
+    id: String
+    sequence: String
+    quality: List<Int>
+}
+```
+
+## 3. Estructura y Modularidad
+### 3.1 La Palabra Clave graph
+A diferencia de un node (lógica atómica), un graph es una definición topológica.
+
+Como Abstracción: Permite encapsular una red de nodos bajo una interfaz de puertos de entrada (in) y salida (out). Para el resto del programa, un graph se comporta exactamente como un nodo.
+
+Como Biblioteca: Los archivos .dana definen múltiples bloques graph que pueden ser exportados y reutilizados.
+
+Jerarquía: Un graph puede instanciar otros grafos, permitiendo la creación de arquitecturas complejas y modulares.
+
+### 3.2 El Punto de Entrada: graph Main
+Es el único bloque ejecutable. No acepta puertos de entrada ni salida externos en su definición, ya que representa la totalidad del programa. Su responsabilidad es:
+
+Instanciar los nodos y grafos de las librerías importadas.
+
+Definir la topología maestra.
+
+Establecer el flujo inicial de datos.
+
+## 4. Conectividad y Lógica de Aristas
+### 4.1 Operadores de Pulso
+-> (Sincrónico): Ejecución inmediata. El nodo destino se procesa en la misma unidad de tiempo que el origen.
+
+~> (Asincrónico): Ejecución diferida. El token se envía a la cola del planificador de Rust, permitiendo paralelismo real.
+
+### 4.2 Guards (Control de Flujo Explícito)
+Las decisiones lógicas se mueven a las aristas. Los guards deben ser explícitos; no existe una cláusula catch-all o else. Si un dato no cumple ningún guard de salida, el flujo para ese TraceID en esa rama se extingue.
+
+```dana
+// Control explícito de ramas
+math.Calculator.out -> [data > 100] -> System.IO.Stdout.in
+math.Calculator.out -> [data <= 100] -> Logger.in
+```
+
+## 5. El bloque process y la eliminación de variables
+Dentro de un node, el bloque process es una transformación pura.
+
+Eliminación de let: Se prohíbe la declaración de variables internas.
+
+Inexistencia de Estado Local: Un nodo no puede "recordar" nada entre pulsos. Si se necesita persistencia, se debe usar un nodo Collector en el grafo o re-inyectar el dato mediante una arista.
+
+## 6. Kernel de Nodos Nativos (Axiomas)
+Nodos mínimos implementados en Rust necesarios para que Dana pueda construir su propia lógica compleja:
+
+Slicer<T>: Divide una List<T> en head: T y tail: List<T>. Emite por el puerto empty si la lista está vacía.
+
+Collector<S, T>: Mantiene un estado de tipo S para un TraceID dado y lo actualiza con cada entrada de tipo T.
+
+Join: Sincronizador que espera tokens de múltiples aristas con el mismo TraceID para emitir un conjunto combinado.

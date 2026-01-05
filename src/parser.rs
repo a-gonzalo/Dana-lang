@@ -43,6 +43,14 @@ pub fn parse_file(input: &str) -> ParseResult<Graph> {
                             })?;
                             
                             match inner.as_rule() {
+                                Rule::graph_decl => {
+                                    let graph_def = parse_graph(inner)?;
+                                    graph.subgraphs.push(graph_def);
+                                }
+                                Rule::type_decl => {
+                                    let struct_def = parse_types(inner)?;
+                                    graph.add_type(struct_def);
+                                }
                                 Rule::node_decl => {
                                     let node = parse_node(inner)?;
                                     graph.add_node(node);
@@ -78,7 +86,7 @@ pub fn parse_file(input: &str) -> ParseResult<Graph> {
             }
         }
     }
-
+    
     Ok(graph)
 }
 
@@ -210,11 +218,108 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<DanaType> {
             )?;
             Ok(DanaType::Stream(Box::new(inner_type)))
         }
+        Rule::identifier => {
+             // Struct type or other custom type ref
+             Ok(DanaType::Type(inner.as_str().to_string(), Vec::new()))
+        }
         _ => Err(ParseError::InvalidSyntax(format!(
             "Unknown type: {:?}",
             inner.as_str()
         ))),
     }
+}
+
+fn parse_types(pair: pest::iterators::Pair<Rule>) -> ParseResult<TypeDef> {
+    let mut inner = pair.into_inner();
+    
+    let name = inner
+        .find(|p| p.as_rule() == Rule::identifier)
+        .ok_or_else(|| ParseError::InvalidSyntax("Missing struct name".to_string()))?
+        .as_str()
+        .to_string();
+        
+    let mut fields = Vec::new();
+    
+    for item in inner {
+        match item.as_rule() {
+            Rule::struct_field => {
+                let mut field_parts = item.into_inner();
+                let field_name = field_parts.next().unwrap().as_str().to_string();
+                let field_type = parse_type(field_parts.next().unwrap())?;
+                fields.push((field_name, field_type));
+            }
+            _ => {}
+        }
+    }
+    
+    Ok(TypeDef { name, fields })
+}
+
+fn parse_graph(pair: pest::iterators::Pair<Rule>) -> ParseResult<GraphDef> {
+    // Similar to parse_node but with components
+    let pair_clone = pair.clone();
+    let mut inner = pair.into_inner();
+    
+    let name = inner
+        .find(|p| p.as_rule() == Rule::identifier)
+        .ok_or_else(|| ParseError::InvalidSyntax("Missing graph name".to_string()))?
+        .as_str()
+        .to_string();
+
+    // First pass: Properties (and maybe ports if we follow node structure)
+    // Actually grammar says: identifier ~ "{" ~ property_decl* ~ (IN ~ port)* ~ (OUT ~ port)* ~ (item)*
+    // Re-using simplified logic: iterate all valid rules.
+    
+    let mut properties = Vec::new();
+    let mut input_ports = Vec::new();
+    let mut output_ports = Vec::new();
+    let mut nodes = Vec::new(); // Instantiations
+    let mut edges = Vec::new();
+
+    let mut parsing_inputs = false;
+    let mut parsing_outputs = false;
+
+    // We need to re-iterate inner to process items in order
+    // But pests inner iterator consumes.
+    // Let's create a new inner from clone for second pass? 
+    // Or just one pass since order is strictly defined in grammar now?
+    // Grammar: (property)* ~ (in port)* ~ (out port)* ~ (node_inst | decl | edge)*
+    // Order is semi-strict.
+    
+    let mut inner = pair_clone.into_inner();
+    inner.next(); // Skip name
+    
+    for item in inner {
+        match item.as_rule() {
+            Rule::property_decl => {
+                properties.push(parse_property(item)?);
+            }
+            Rule::KW_IN => { parsing_inputs = true; parsing_outputs = false; }
+            Rule::KW_OUT => { parsing_inputs = false; parsing_outputs = true; }
+            Rule::port_decl => {
+                let port = parse_port(item)?;
+                if parsing_inputs { input_ports.push(port); }
+                else if parsing_outputs { output_ports.push(port); }
+            }
+            Rule::node_decl => {
+                let node = parse_node(item)?;
+                nodes.push(node);
+            }
+            Rule::edge_decl => {
+                edges.push(parse_edge(item)?);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(GraphDef {
+        name,
+        properties,
+        input_ports,
+        output_ports,
+        nodes,
+        edges,
+    })
 }
 
 fn parse_process_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<ProcessBlock> {
@@ -526,5 +631,141 @@ mod tests {
         assert_eq!(graph.edges.len(), 1);
         assert_eq!(graph.edges[0].source.node, "A");
         assert_eq!(graph.edges[0].target.node, "B");
+    }
+    
+
+    #[test]
+    fn test_parse_type() {
+        let input = r#"
+            type Point {
+                x: Int,
+                y: Int
+            }
+            node User {
+                in loc: Point
+            }
+        "#;
+        
+        let result = parse_file(input);
+        if let Err(e) = &result {
+             eprintln!("Parse error: {}", e);
+        }
+        assert!(result.is_ok());
+        let graph = result.unwrap();
+        assert_eq!(graph.types.len(), 1);
+        assert_eq!(graph.types[0].name, "Point");
+        assert_eq!(graph.types[0].fields.len(), 2);
+        assert_eq!(graph.types[0].fields[0].0, "x");
+        
+        // Verify 'loc' port has Struct type
+        let node = &graph.nodes[0];
+        match &node.input_ports[0].type_annotation {
+            DanaType::Type(name, _) => assert_eq!(name, "Point"),
+            _ => panic!("Expected Type for 'loc' port"),
+        }
+    }
+
+    #[test]
+    fn test_parse_graph() {
+        let input = r#"
+            node Worker {
+                in data: Int
+                out res: Int
+                process: (data) => {
+                    emit res(42)
+                }
+            }
+
+            graph Main {
+                in start_param: Int
+                out final_res: Int
+
+                Worker.res -> System.IO.Stdout
+            }
+        "#;
+        
+        let result = parse_file(input);
+        if let Err(e) = &result {
+             eprintln!("Parse error: {}", e);
+        }
+        assert!(result.is_ok());
+        let graph = result.unwrap();
+        
+        // Check global node definition
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].name, "Worker");
+
+        // Check subgraph definition
+        assert_eq!(graph.subgraphs.len(), 1);
+        let main = &graph.subgraphs[0];
+        assert_eq!(main.name, "Main");
+        
+        // Check edges within graph
+        assert_eq!(main.edges.len(), 1);
+        assert_eq!(main.edges[0].source.node, "Worker");
+        assert_eq!(main.edges[0].source.port, "res");
+        assert_eq!(main.edges[0].target.node, "System.IO");
+        assert_eq!(main.edges[0].target.port, "Stdout");
+    }
+
+
+    #[test]
+    fn test_parse_another_node() {
+        let input = r#"
+        node Source {
+            prefix: String = "Hello from "
+            in start: Impulse
+            out data: String
+            
+            process: (start) => {
+                emit data(prefix + "Graph!")
+            }
+        }
+        node Output {
+            in data: String
+            process: (data) => {
+                emit data(data)
+            }
+        }
+
+        graph SubGraph {
+            Source.data -> Output.data
+        }
+        graph Main {
+            SubGraph.data -> System.IO.Stdout
+        }
+        "#;
+        
+        let result = parse_file(input);
+        if let Err(e) = &result {
+             eprintln!("Parse error: {}", e);
+        }
+        assert!(result.is_ok());
+        let graph = result.unwrap();
+            
+        // Check global node definition
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.nodes[0].name, "Source");
+        assert_eq!(graph.nodes[1].name, "Output");
+
+        // Check subgraph definition
+        assert_eq!(graph.subgraphs.len(), 2);
+        let main = &graph.subgraphs[1];
+        assert_eq!(main.name, "Main");
+        let subgraph = &graph.subgraphs[0];
+        assert_eq!(subgraph.name, "SubGraph");
+        
+        // Check edges within graph
+        assert_eq!(main.edges.len(), 1);
+        assert_eq!(main.edges[0].source.node, "SubGraph");
+        assert_eq!(main.edges[0].source.port, "data");
+        assert_eq!(main.edges[0].target.node, "System.IO");
+        assert_eq!(main.edges[0].target.port, "Stdout");
+
+        assert_eq!(subgraph.edges.len(), 1);
+        assert_eq!(subgraph.edges[0].source.node, "Source");
+        assert_eq!(subgraph.edges[0].source.port, "data");
+        assert_eq!(subgraph.edges[0].target.node, "Output");
+        assert_eq!(subgraph.edges[0].target.port, "data");
     }
 }

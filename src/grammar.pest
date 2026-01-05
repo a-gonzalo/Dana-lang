@@ -11,7 +11,10 @@ KW_OUT = @{ "out" ~ !ASCII_ALPHANUMERIC }
 KW_PROCESS = @{ "process" ~ !ASCII_ALPHANUMERIC }
 KW_EMIT = @{ "emit" ~ !ASCII_ALPHANUMERIC }
 KW_LET = @{ "let" ~ !ASCII_ALPHANUMERIC }
+
 KW_ON = @{ "on" ~ !ASCII_ALPHANUMERIC }
+KW_TYPE = @{ "type" ~ !ASCII_ALPHANUMERIC }
+KW_GRAPH = @{ "graph" ~ !ASCII_ALPHANUMERIC }
 
 // Types
 type_int = { "Int" }
@@ -19,7 +22,7 @@ type_float = { "Float" }
 type_string = { "String" }
 type_bool = { "Bool" }
 type_byte = { "Byte" }
-type_unit = { "Unit" | "Trigger" }
+type_unit = { "Unit" | "Impulse" }
 type_stream = { "Stream" ~ "<" ~ dana_type ~ ">" }
 
 dana_type = {
@@ -29,12 +32,14 @@ dana_type = {
     | type_string
     | type_bool
     | type_byte
+
     | type_unit
+    | identifier
 }
 
 // Identifiers
 identifier = @{ !keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-keyword = { KW_NODE | KW_IN | KW_OUT | KW_PROCESS | KW_EMIT | KW_LET | KW_ON }
+keyword = { KW_NODE | KW_IN | KW_OUT | KW_PROCESS | KW_EMIT | KW_LET | KW_ON | KW_TYPE | KW_GRAPH }
 
 // Literals
 int_literal = @{ "-"? ~ ASCII_DIGIT+ }
@@ -112,6 +117,13 @@ port_decl = {
     identifier ~ ":" ~ dana_type
 }
 
+// Struct declaration
+// type User { name: String, age: Int }
+struct_field = { identifier ~ ":" ~ dana_type }
+type_decl = {
+    KW_TYPE ~ identifier ~ "{" ~ struct_field ~ ("," ~ struct_field)* ~ ","? ~ "}"
+}
+
 // Node declaration
 node_decl = {
     KW_NODE ~ identifier ~ "{" ~
@@ -122,8 +134,20 @@ node_decl = {
     "}"
 }
 
-// Port reference: NodeName.portName
-// Port reference: NodeName.portName or Package.Node.portName
+// Graph component (Composite)
+// graph Main { ... }
+graph_decl = {
+    KW_GRAPH ~ identifier ~ "{" ~
+        property_decl* ~
+        (KW_IN ~ port_decl)* ~
+        (KW_OUT ~ port_decl)* ~
+        (node_decl | edge_decl)* ~
+    "}"
+}
+
+
+
+// Port reference: NodeName.portName or Graph.Node.portName
 port_ref = { identifier ~ ("." ~ identifier)+ }
 
 // Edge operators
@@ -141,7 +165,9 @@ edge_decl = {
 
 // Top-level items
 item = {
-    node_decl
+    type_decl
+    | graph_decl
+    | node_decl
     | edge_decl
 }
 

@@ -23,6 +23,8 @@ pub enum DanaType {
     Stream(Box<DanaType>),
     /// Unit type (for triggers/signals)
     Unit,
+    /// Type definition: Name, Fields
+    Type(String, Vec<(String, DanaType)>),
 }
 
 impl fmt::Display for DanaType {
@@ -35,6 +37,7 @@ impl fmt::Display for DanaType {
             DanaType::Byte => write!(f, "Byte"),
             DanaType::Stream(inner) => write!(f, "Stream<{}>", inner),
             DanaType::Unit => write!(f, "Unit"),
+            DanaType::Type(name, _) => write!(f, "{}", name),
         }
     }
 }
@@ -70,6 +73,11 @@ impl TypeChecker {
             (DanaType::Stream(s), DanaType::Stream(t)) => {
                 Self::are_compatible(s, t)
             }
+            
+            // Struct compatibility (Nominal typing: names must match)
+            // We could also check fields, but for now simple name check is safer for MVP.
+            // (Assuming no name collisions in same namespace)
+            (DanaType::Type(n1, _), DanaType::Type(n2, _)) => n1 == n2,
             
             // Int can be promoted to Float
             (DanaType::Int, DanaType::Float) => true,

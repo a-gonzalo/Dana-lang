@@ -5,9 +5,30 @@
 use crate::types::DanaType;
 use serde::{Deserialize, Serialize};
 
-/// A complete Dana program (graph)
+/// Definition of a custom type (struct)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Graph {
+pub struct TypeDef {
+    pub name: String,
+    pub fields: Vec<(String, DanaType)>,
+}
+
+/// A complete Dana program (collection of graphs and types)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Graph { // Renaming to Program would be better, but keeping Graph for now as top container
+    pub nodes: Vec<Node>, // Global nodes (legacy v0.1 support or top-level)
+    pub edges: Vec<Edge>, // Global edges (legacy v0.1)
+    pub types: Vec<TypeDef>,
+    pub subgraphs: Vec<GraphDef>, // New: Defined subgraphs (including Main)
+}
+
+/// A graph definition (composite node)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphDef {
+    pub name: String,
+    pub properties: Vec<Property>,
+    pub input_ports: Vec<Port>,
+    pub output_ports: Vec<Port>,
+    // Components inside the graph (declared inline)
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
 }
@@ -173,7 +194,13 @@ impl Graph {
         Self {
             nodes: Vec::new(),
             edges: Vec::new(),
+            types: Vec::new(),
+            subgraphs: Vec::new(),
         }
+    }
+
+    pub fn add_type(&mut self, type_def: TypeDef) {
+        self.types.push(type_def);
     }
 
     pub fn add_node(&mut self, node: Node) {

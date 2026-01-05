@@ -40,6 +40,12 @@ The project is currently in **MVP (Minimum Viable Product)** stage.
 cargo build --release
 ```
 
+### Development with WSL
+If you are developing on Windows but using the Rust toolchain in WSL:
+1. **VS Code Tasks**: Use the provided tasks (`Ctrl+Shift+B` for build) which run `cargo` inside WSL via `dana.ps1`.
+2. **PowerShell Script**: You can also use `.\dana.ps1 build`, `.\dana.ps1 test`, or `.\dana.ps1 run "..."`.
+3. **Performance**: The build uses a target directory inside WSL (`~/.cargo-target/dana-lang`) to avoid the slow performance of building on `/mnt/c`.
+
 ### Running Examples
 
 Two example programs are provided in the `examples/` directory.

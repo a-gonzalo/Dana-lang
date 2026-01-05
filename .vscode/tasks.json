@@ -1,0 +1,64 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "WSL: Cargo Build",
+            "type": "shell",
+            "command": ".\\dana.ps1",
+            "args": [
+                "build"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "WSL: Cargo Run",
+            "type": "shell",
+            "command": ".\\dana.ps1",
+            "args": [
+                "run",
+                "${input:args}"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        },
+        {
+            "label": "WSL: Cargo Test",
+            "type": "shell",
+            "command": ".\\dana.ps1",
+            "args": [
+                "test"
+            ],
+            "group": "test",
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "args",
+            "type": "promptString",
+            "description": "Arguments for cargo run",
+            "default": "run examples/hello.dana --trigger HelloWorld.trigger"
+        }
+    ]
+}

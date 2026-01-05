@@ -708,7 +708,8 @@ mod tests {
         assert_eq!(main.edges[0].target.port, "Stdout");
     }
 
-
+    // TODO: Okay, this isn't correct. I want to expect to chain a lot of nodes within 1 edge.
+    // Actually, I can only pass 1 source.port into another target.port. I need to check how tf Pest works like that.
     #[test]
     fn test_parse_another_node() {
         let input = r#"
@@ -723,16 +724,26 @@ mod tests {
         }
         node Output {
             in data: String
+            out new_data: String
             process: (data) => {
-                emit data(data)
+                emit new_data(data)
             }
         }
 
         graph SubGraph {
-            Source.data -> Output.data
+            node AnotherNode {
+                in a_string: String
+                out new_data : String
+                process: (a_string) => {
+                    emit new_data(a_string + "!!!!!!!")
+                }
+            }
+            // This should be ```Source.data -> AnotherNode.a_string -> Output.new_data``` but it doesn't work yet
+            Source.data -> Output.new_data
+            AnotherNode.a_string -> Output.new_data
         }
         graph Main {
-            SubGraph.data -> System.IO.Stdout
+            SubGraph.new_data -> System.IO.Stdout
         }
         "#;
         
@@ -758,14 +769,14 @@ mod tests {
         // Check edges within graph
         assert_eq!(main.edges.len(), 1);
         assert_eq!(main.edges[0].source.node, "SubGraph");
-        assert_eq!(main.edges[0].source.port, "data");
+        assert_eq!(main.edges[0].source.port, "new_data");
         assert_eq!(main.edges[0].target.node, "System.IO");
         assert_eq!(main.edges[0].target.port, "Stdout");
 
-        assert_eq!(subgraph.edges.len(), 1);
+        assert_eq!(subgraph.edges.len(), 2);
         assert_eq!(subgraph.edges[0].source.node, "Source");
         assert_eq!(subgraph.edges[0].source.port, "data");
         assert_eq!(subgraph.edges[0].target.node, "Output");
-        assert_eq!(subgraph.edges[0].target.port, "data");
+        assert_eq!(subgraph.edges[0].target.port, "new_data");
     }
 }

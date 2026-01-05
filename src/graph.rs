@@ -1,4 +1,4 @@
-use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType, PortRef};
+use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType, PortRef, Guard};
 use crate::types::{DanaType, TypeChecker, TypeError};
 use crate::runtime::node::RuntimeNode;
 use crate::runtime::value::Value;
@@ -27,6 +27,7 @@ pub struct RuntimeEdge {
     pub source_port: String,
     pub target_port: String,
     pub edge_type: EdgeType,
+    pub guard: Option<Guard>,
 }
 
 /// The executable graph structure
@@ -159,6 +160,7 @@ impl ExecutableGraph {
             source_port: edge.source.port.clone(),
             target_port: edge.target.port.clone(),
             edge_type: edge.edge_type,
+            guard: edge.guard.clone(),
         };
 
         graph.add_edge(source_idx, target_idx, runtime_edge);

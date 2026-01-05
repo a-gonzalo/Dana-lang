@@ -112,7 +112,7 @@ impl RuntimeNode {
         }
     }
 
-    fn evaluate_expression(expr: &Expression, scope: &HashMap<String, Value>, properties: &HashMap<String, Value>) -> Result<Value, String> {
+    pub(crate) fn evaluate_expression(expr: &Expression, scope: &HashMap<String, Value>, properties: &HashMap<String, Value>) -> Result<Value, String> {
         match expr {
             Expression::IntLiteral(i) => Ok(Value::Int(*i)),
             Expression::FloatLiteral(f) => Ok(Value::Float(*f)),
@@ -143,6 +143,15 @@ impl RuntimeNode {
             },
             (BinaryOperator::Add, Value::String(l), Value::String(r)) => Ok(Value::String(l + &r)),
             (BinaryOperator::Add, Value::String(l), Value::Int(r)) => Ok(Value::String(format!("{}{}", l, r))),
+            
+            // Comparisons
+            (BinaryOperator::GreaterThan, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l > r)),
+            (BinaryOperator::LessThan, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l < r)),
+            (BinaryOperator::GreaterEqual, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l >= r)),
+            (BinaryOperator::LessEqual, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l <= r)),
+            (BinaryOperator::Equal, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l == r)),
+            (BinaryOperator::NotEqual, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l != r)),
+            
             _ => Err("Unsupported binary operation or type mismatch".to_string()),
         }
     }

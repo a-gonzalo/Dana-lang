@@ -14,8 +14,9 @@ pest_derive = "2.7"
 # Graph data structures
 petgraph = "0.6"
 
-# Async runtime (for future async edges)
-tokio = { version = "1.35", features = ["full"] }
+# Concurrency
+crossbeam-channel = "0.5"
+dashmap = "5.5"
 
 # Error handling
 thiserror = "~1.0"

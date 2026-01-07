@@ -1,17 +1,15 @@
-/// Synchronous Scheduler for Dana MVP
-///
-/// Drives the execution of the graph by propagating events (values) between nodes.
-
 use crate::graph::ExecutableGraph;
 use crate::runtime::value::Value;
+use crate::runtime::pulse::{Pulse, TraceId};
 use petgraph::graph::NodeIndex;
 use std::collections::VecDeque;
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
-use crate::runtime::node::{RuntimeNode, NodeKind}; // Need RuntimeNode and NodeKind for evaluating expression
+use crate::runtime::node::{RuntimeNode, NodeKind}; 
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
-/// An event in the system
+/// An event in the system (Legacy, will be replaced by Pulse)
 #[derive(Debug, Clone)]
 pub struct Event {
     pub target_node: NodeIndex,
@@ -19,92 +17,243 @@ pub struct Event {
     pub payload: Value,
 }
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use dashmap::DashMap;
+use crossbeam_channel::{Sender, Receiver, unbounded};
+use std::thread;
+use std::sync::Mutex;
+
+const MAX_DEPTH: u32 = 1000;
+
+/// The state store for ephemeral trace-local data
+pub struct TraceStateStore {
+    // Key: (TraceId, NodeIndex) -> Properties/State of that node for that trace
+    states: RwLock<HashMap<(TraceId, NodeIndex), HashMap<String, Value>>>,
+}
+
+impl TraceStateStore {
+    pub fn new() -> Self {
+        Self {
+            states: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub fn get_node_state(&self, trace_id: TraceId, node_idx: NodeIndex) -> Option<HashMap<String, Value>> {
+        let lock = self.states.read().unwrap();
+        lock.get(&(trace_id, node_idx)).cloned()
+    }
+
+    pub fn set_node_state(&self, trace_id: TraceId, node_idx: NodeIndex, state: HashMap<String, Value>) {
+        let mut lock = self.states.write().unwrap();
+        lock.insert((trace_id, node_idx), state);
+    }
+    
+    pub fn clear_trace(&self, trace_id: TraceId) {
+        let mut lock = self.states.write().unwrap();
+        lock.retain(|(tid, _), _| *tid != trace_id);
+    }
+}
+
 pub struct Scheduler {
-    graph: ExecutableGraph,
-    event_queue: VecDeque<Event>,
-    max_steps: usize,
+    graph: Arc<ExecutableGraph>,
+    state_store: Arc<TraceStateStore>,
+    pulse_tx: Sender<Pulse>,
+    pulse_rx: Receiver<Pulse>,
+    tracker: Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
+    trace_errors: Arc<DashMap<TraceId, Arc<Mutex<Option<String>>>>>,
 }
 
 impl Scheduler {
     pub fn new(graph: ExecutableGraph) -> Self {
+        let (tx, rx) = unbounded();
         Self {
-            graph,
-            event_queue: VecDeque::new(),
-            max_steps: 1000, // Safety limit for infinite loops
+            graph: Arc::new(graph),
+            state_store: Arc::new(TraceStateStore::new()),
+            pulse_tx: tx,
+            pulse_rx: rx,
+            tracker: Arc::new(DashMap::new()),
+            trace_errors: Arc::new(DashMap::new()),
         }
     }
 
-    /// Inject an initial event to start execution
+    /// Inject an initial event to start execution, creating a new TraceID
     pub fn inject_event(&mut self, node_name: &str, port: &str, value: Value) -> Result<(), String> {
         let node_idx = *self.graph.node_map.get(node_name)
             .ok_or_else(|| format!("Node '{}' not found", node_name))?;
         
-        self.event_queue.push_back(Event {
-            target_node: node_idx,
-            target_port: port.to_string(),
-            payload: value,
-        });
+        let trace_id = TraceId::new();
+        
+        // Initialize tracker and error map for this trace
+        self.tracker.insert(trace_id, Arc::new(AtomicUsize::new(1)));
+        self.trace_errors.insert(trace_id, Arc::new(Mutex::new(None)));
+        
+        self.pulse_tx.send(Pulse::new(
+            trace_id,
+            node_idx,
+            port.to_string(),
+            value,
+            0, // Start depth
+        )).map_err(|e| format!("Failed to send initial pulse: {}", e))?;
 
         Ok(())
     }
 
-    /// Run the scheduler until the queue is empty or max steps reached
+    /// Run the scheduler until all traces are finished
     pub fn run(&mut self) -> Result<(), String> {
-        let mut steps = 0;
+        let num_workers = thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let mut workers = Vec::new();
 
-        while let Some(event) = self.event_queue.pop_front() {
-            if steps >= self.max_steps {
-                return Err("Max execution steps reached (infinite loop suspected)".to_string());
+        for _ in 0..num_workers {
+            let rx = self.pulse_rx.clone();
+            let tx = self.pulse_tx.clone();
+            let graph = Arc::clone(&self.graph);
+            let state_store = Arc::clone(&self.state_store);
+            let tracker = Arc::clone(&self.tracker);
+            let trace_errors = Arc::clone(&self.trace_errors);
+
+            let handle = thread::spawn(move || {
+                while let Ok(pulse) = rx.recv() {
+                    // Check if this trace already has an error
+                    if let Some(err_mutex) = trace_errors.get(&pulse.trace_id) {
+                        if err_mutex.lock().unwrap().is_some() {
+                            // Abandon this pulse
+                            if let Some(counter) = tracker.get(&pulse.trace_id) {
+                                counter.fetch_sub(1, Ordering::SeqCst);
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Check Depth for Loop Detection
+                    if pulse.depth > MAX_DEPTH {
+                        let err_msg = format!("Max execution depth reached for trace {} at node {}", pulse.trace_id, graph.graph[pulse.target_node].name);
+                        if let Some(err_mutex) = trace_errors.get(&pulse.trace_id) {
+                            let mut lock = err_mutex.lock().unwrap();
+                            if lock.is_none() {
+                                *lock = Some(err_msg);
+                            }
+                        }
+                        
+                        if let Some(counter) = tracker.get(&pulse.trace_id) {
+                            counter.fetch_sub(1, Ordering::SeqCst);
+                        }
+                        continue;
+                    }
+
+                    if let Err(e) = Self::process_pulse_static(pulse, &graph, &state_store, &tx, &tracker, &trace_errors) {
+                        eprintln!("Error processing pulse: {}", e);
+                    }
+                }
+            });
+            workers.push(handle);
+        }
+
+        // Wait until all trackers are zero
+        let mut final_error = None;
+        loop {
+            if self.tracker.is_empty() {
+                break;
             }
-            steps += 1;
+            
+            // Cleanup finished traces or collect errors
+            self.tracker.retain(|tid, counter| {
+                if counter.load(Ordering::SeqCst) == 0 {
+                    // Trace finished. Check if it had an error.
+                    if let Some(err_mutex) = self.trace_errors.get(tid) {
+                        let lock = err_mutex.lock().unwrap();
+                        if let Some(err) = &*lock {
+                            if final_error.is_none() {
+                                final_error = Some(err.clone());
+                            }
+                        }
+                    }
+                    
+                    self.state_store.clear_trace(*tid);
+                    self.trace_errors.remove(tid);
+                    false // Remove from tracker
+                } else {
+                    true
+                }
+            });
 
-            self.process_event(event)?;
+            if self.tracker.is_empty() {
+                break;
+            }
+            
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        if let Some(err) = final_error {
+            return Err(err);
         }
 
         Ok(())
     }
 
-    fn process_event(&mut self, event: Event) -> Result<(), String> {
-        // 1. Execute the target node
-        let result = {
-            let node = &mut self.graph.graph[event.target_node];
+    fn process_pulse_static(
+        pulse: Pulse, 
+        graph: &Arc<ExecutableGraph>, 
+        state_store: &Arc<TraceStateStore>,
+        tx: &Sender<Pulse>,
+        tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
+        trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<String>>>>>
+    ) -> Result<(), String> {
+        let result = Self::execute_and_propagate(pulse.clone(), graph, state_store, tx, tracker, trace_errors);
+        
+        // ALWAYS DECREMENT when this pulse is done
+        if let Some(counter) = tracker.get(&pulse.trace_id) {
+            counter.fetch_sub(1, Ordering::SeqCst);
+        }
+
+        result
+    }
+
+    fn execute_and_propagate(
+        pulse: Pulse, 
+        graph: &Arc<ExecutableGraph>, 
+        state_store: &Arc<TraceStateStore>,
+        tx: &Sender<Pulse>,
+        tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
+        trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<String>>>>>
+    ) -> Result<(), String> {
+        // 1. Get current node state from TraceStateStore
+        let trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)
+            .unwrap_or_else(HashMap::new);
+
+        // 2. Execute the target node
+        let result_raw = {
+            let node = &graph.graph[pulse.target_node];
             
-            // Skip if port doesn't exist (validation should have caught this, but runtime safety)
-            if !node.input_ports.contains_key(&event.target_port) {
-                 return Err(format!("Node '{}' has no input port '{}'", node.name, event.target_port));
+            if !node.input_ports.contains_key(&pulse.target_port) {
+                 return Err(format!("Node '{}' has no input port '{}'", node.name, pulse.target_port));
             }
 
-            node.execute(&event.target_port, event.payload)?
+            node.execute(&pulse.target_port, pulse.payload, &trace_state)
         };
 
-        // 2. Propagate outputs to connected downstream nodes
+        let result = match result_raw {
+            Ok(res) => res,
+            Err(e) => {
+                // Record error in tracker
+                if let Some(err_mutex) = trace_errors.get(&pulse.trace_id) {
+                    let mut lock = err_mutex.lock().unwrap();
+                    if lock.is_none() {
+                        *lock = Some(e.clone());
+                    }
+                }
+                return Err(e);
+            }
+        };
+
+        // 3. Propagate outputs to connected downstream nodes
         for (out_port, out_value) in result.outputs {
-            let mut outgoing_events = Vec::new();
+            let mut outgoing_pulses = Vec::new();
             
-            // Find all edges connected to this output port
-            for edge in self.graph.graph.edges_directed(event.target_node, Direction::Outgoing) {
+            for edge in graph.graph.edges_directed(pulse.target_node, Direction::Outgoing) {
                  if edge.weight().source_port == out_port {
-                     // Check Guard
+                     // Guard check
                      if let Some(guard) = &edge.weight().guard {
-                         // To evaluate the guard, we need a scope.
-                         // For now (MVP v0.1), the scope contains the output value bound to the port name.
-                         // AND potentially we should allow access to the source node properties?
-                         // Let's allow it. We need access to the source node again.
-                         
-                         // We can't easily get mutable access to the node because we are iterating the graph (immutable borrow?).
-                         // Wait, self.graph.graph is used for iteration.
-                         // However, 'node' (mutable borrow) scope ended above? No, 'let node = &mut ...' is alive?
-                         // Line 67: let node = &mut self.graph.graph[...]
-                         // If 'node' is still alive, we can't iterate self.graph.graph.
-                         // We should drop 'node' borrow before iterating edges. 
-                         // But we need 'result' which came from 'node'.
-                         
-                         // Fix: 'node' borrow must end. 'result' is owned (ExecutionResult cloned outputs).
-                         // So we are good if we don't use 'node' here.
-                         // But to evaluate guard with Properties, we need read access to the node.
-                         
-                         // Let's re-borrow the node immutably to get properties.
-                         let source_node = &self.graph.graph[event.target_node];
+                         let source_node = &graph.graph[pulse.target_node];
                          let properties = match &source_node.kind {
                              NodeKind::DanaProcess { properties, .. } => Some(properties),
                              _ => None,
@@ -115,37 +264,33 @@ impl Scheduler {
 
                          let mut scope = HashMap::new();
                          scope.insert(out_port.clone(), out_value.clone());
-                         
+                         for (k, v) in &trace_state {
+                             scope.insert(k.clone(), v.clone());
+                         }
+
                          match RuntimeNode::evaluate_expression(&guard.condition, &scope, props_ref) {
-                             Ok(Value::Bool(true)) => {
-                                 // Guard pass
-                             },
-                             Ok(Value::Bool(false)) => {
-                                 continue; // Guard blocked
-                             },
-                             Ok(_) => {
-                                 // Non-bool result treated as false/error? For now block.
-                                 eprintln!("Warning: Guard evaluated to non-boolean value. Blocking edge.");
-                                 continue;
-                             }
-                             Err(e) => {
-                                 eprintln!("Error evaluating guard: {}. Blocking edge.", e);
-                                 continue;
-                             }
+                             Ok(Value::Bool(true)) => {},
+                             Ok(Value::Bool(false)) => continue,
+                             _ => continue,
                          }
                      }
-
-                     outgoing_events.push((edge.target(), edge.weight().target_port.clone()));
+                     outgoing_pulses.push((edge.target(), edge.weight().target_port.clone()));
                  }
             }
 
-            // Create events for downstream nodes
-            for (target_idx, target_port) in outgoing_events {
-                self.event_queue.push_back(Event {
-                    target_node: target_idx,
+            // Update tracker with new pulses BEFORE sending them
+            if let Some(counter) = tracker.get(&pulse.trace_id) {
+                counter.fetch_add(outgoing_pulses.len(), Ordering::SeqCst);
+            }
+
+            for (target_idx, target_port) in outgoing_pulses {
+                tx.send(Pulse::new(
+                    pulse.trace_id,
+                    target_idx,
                     target_port,
-                    payload: out_value.clone(),
-                });
+                    out_value.clone(),
+                    pulse.depth + 1,
+                )).map_err(|e| format!("Failed to send pulse: {}", e))?;
             }
         }
 
@@ -264,7 +409,7 @@ mod tests {
         #[derive(Debug)]
         struct FailNode;
         impl crate::runtime::native::NativeNode for FailNode {
-            fn on_input(&mut self, _port: &str, _value: Value) -> Result<Vec<(String, Value)>, String> {
+            fn on_input(&self, _port: &str, _value: Value) -> Result<Vec<(String, Value)>, String> {
                 Err("FailNode executed".to_string())
             }
         }
@@ -332,7 +477,7 @@ mod tests {
         #[derive(Debug)]
         struct FailNode;
         impl crate::runtime::native::NativeNode for FailNode {
-            fn on_input(&mut self, _port: &str, _value: Value) -> Result<Vec<(String, Value)>, String> {
+            fn on_input(&self, _port: &str, _value: Value) -> Result<Vec<(String, Value)>, String> {
                 Err("FailNode executed".to_string())
             }
         }
@@ -352,5 +497,44 @@ mod tests {
         
         assert!(res.is_err(), "Guard should Pass 15. Result Err means Failer WAS reached.");
         assert_eq!(res.err().unwrap(), "FailNode executed");
+    }
+
+    #[test]
+    fn test_infinite_loop_detection() {
+        // Setup: Looper.out -> Looper.in (Cycle)
+        let mut ast = Graph::new();
+        
+        let process = ProcessBlock {
+            triggers: vec!["in".to_string()],
+            statements: vec![
+                Statement::Emit { 
+                    port: "out".to_string(), 
+                    value: Expression::IntLiteral(1) 
+                }
+            ],
+        };
+        
+        let mut node = Node::new("Looper");
+        node.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int });
+        node.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int });
+        node.process = Some(process);
+        
+        ast.add_node(node);
+        ast.add_edge(crate::ast::Edge {
+            source: crate::ast::PortRef::new("Looper", "out"),
+            target: crate::ast::PortRef::new("Looper", "in"),
+            edge_type: crate::ast::EdgeType::Sync,
+            guard: None,
+        });
+
+        let graph = ExecutableGraph::from_ast(ast).unwrap();
+        let mut scheduler = Scheduler::new(graph);
+        
+        scheduler.inject_event("Looper", "in", Value::Int(1)).unwrap();
+        
+        let res = scheduler.run();
+        
+        assert!(res.is_err(), "Infinite loop should be detected and return Err");
+        assert!(res.err().unwrap().contains("Max execution depth reached"));
     }
 }

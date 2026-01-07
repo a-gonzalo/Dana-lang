@@ -70,8 +70,8 @@ impl RuntimeNode {
     }
 
     /// Execute the node logic triggered by a specific input
-    pub fn execute(&mut self, trigger_port: &str, input_value: Value) -> Result<ExecutionResult, String> {
-        match &mut self.kind {
+    pub fn execute(&self, trigger_port: &str, input_value: Value, trace_state: &HashMap<String, Value>) -> Result<ExecutionResult, String> {
+        match &self.kind {
             NodeKind::DanaProcess { properties, process } => {
                 let mut outputs = Vec::new();
                 
@@ -79,8 +79,14 @@ impl RuntimeNode {
                 if let Some(process) = process {
                     // Check if this port triggers the process
                     if process.triggers.iter().any(|t| t == trigger_port) {
-                        // Create a local scope with properties + input value
+                        // Create a local scope with (properties OR trace_state) + input value
+                        // In EPOS, the base properties are the default, but trace_state can override them?
+                        // Actually, properties are static config, trace_state is ephemeral data.
                         let mut scope = properties.clone();
+                        // Overlay trace-specific state
+                        for (k, v) in trace_state {
+                            scope.insert(k.clone(), v.clone());
+                        }
                         scope.insert(trigger_port.to_string(), input_value);
                         
                         // Execute statements
@@ -88,7 +94,6 @@ impl RuntimeNode {
                             match stmt {
                                 Statement::Emit { port, value } => {
                                     let val = Self::evaluate_expression(&value, &scope, properties)?;
-                                    // println!("Emit {}({})", port, val); // Removed temporary print
                                     outputs.push((port.clone(), val));
                                 }
                                 Statement::Let { name, value } => {

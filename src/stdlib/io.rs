@@ -5,7 +5,7 @@ use crate::runtime::value::Value;
 pub struct SystemIONode;
 
 impl NativeNode for SystemIONode {
-    fn on_input(&mut self, port: &str, value: Value) -> Result<Vec<(String, Value)>, String> {
+    fn on_input(&self, port: &str, value: Value) -> Result<Vec<(String, Value)>, String> {
         match port {
             "stdout" => {
                 println!("{}", value);

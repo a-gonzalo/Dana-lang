@@ -68,15 +68,22 @@ impl Scheduler {
     }
 
     /// Inject an initial event to start execution, creating a new TraceID
-    pub fn inject_event(&mut self, node_name: &str, port: &str, value: Value) -> Result<(), String> {
+    pub fn inject_event(&self, node_name: &str, port: &str, value: Value) -> Result<(), String> {
+        let trace_id = TraceId::new();
+        self.inject_event_with_trace(node_name, port, value, trace_id)
+    }
+
+    /// Inject an event into the scheduler with a specific TraceId
+    pub fn inject_event_with_trace(&self, node_name: &str, port: &str, value: Value, trace_id: TraceId) -> Result<(), String> {
         let node_idx = *self.graph.node_map.get(node_name)
             .ok_or_else(|| format!("Node '{}' not found", node_name))?;
         
-        let trace_id = TraceId::new();
-        
-        // Initialize tracker and error map for this trace
-        self.tracker.insert(trace_id, Arc::new(AtomicUsize::new(1)));
-        self.trace_errors.insert(trace_id, Arc::new(Mutex::new(None)));
+        // Track this trace (create or increment pulse counter)
+        self.tracker.entry(trace_id)
+            .and_modify(|c| { c.fetch_add(1, std::sync::atomic::Ordering::SeqCst); })
+            .or_insert(Arc::new(std::sync::atomic::AtomicUsize::new(1)));
+
+        self.trace_errors.entry(trace_id).or_insert(Arc::new(std::sync::atomic::Mutex::new(None)));
         
         self.pulse_tx.send(Pulse::new(
             trace_id,
@@ -103,8 +110,13 @@ impl Scheduler {
             }
         }
 
+        if to_trigger.is_empty() {
+            return Ok(false);
+        }
+
+        let shared_trace_id = TraceId::new();
         for (node_name, port_name) in to_trigger {
-            self.inject_event(&node_name, &port_name, Value::Unit)?;
+            self.inject_event_with_trace(&node_name, &port_name, Value::Unit, shared_trace_id)?;
             triggered = true;
         }
 
@@ -520,7 +532,7 @@ mod tests {
         #[derive(Debug)]
         struct FailNode;
         impl crate::runtime::native::NativeNode for FailNode {
-            fn on_input(&self, _port: &str, _value: Value) -> Result<Vec<(String, Value)>, String> {
+            fn on_input(&self, _port: &str, _value: Value, _ctx: &crate::runtime::native::NativeContext) -> Result<Vec<(String, Value)>, String> {
                 Err("FailNode executed".to_string())
             }
         }

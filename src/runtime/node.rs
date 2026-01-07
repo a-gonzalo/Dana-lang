@@ -87,8 +87,10 @@ impl RuntimeNode {
                         // Actually, properties are static config, trace_state is ephemeral data.
                         let mut scope = properties.clone();
                         // Overlay trace-specific state
-                        for (k, v) in trace_state {
-                            scope.insert(k.clone(), v.clone());
+                        if let Some(state) = &trace_state {
+                            for (k, v) in state {
+                                scope.insert(k.clone(), v.clone());
+                            }
                         }
                         scope.insert(trigger_port.to_string(), input_value);
                         

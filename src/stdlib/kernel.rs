@@ -9,7 +9,7 @@ pub struct CollectorNode;
 
 impl NativeNode for CollectorNode {
     fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, String> {
-        let mut state = ctx.state_store.get_node_state(ctx.trace_id, ctx.node_idx);
+        let mut state = ctx.state_store.get_node_state(ctx.trace_id, ctx.node_idx).unwrap_or_else(HashMap::new);
         
         match port {
             "in" => {
@@ -27,7 +27,7 @@ impl NativeNode for CollectorNode {
                 // Emit current list and clear
                 let list_val = state.remove("list").unwrap_or(Value::List(Vec::new()));
                 ctx.state_store.set_node_state(ctx.trace_id, ctx.node_idx, state);
-                Ok(vec![("out".to_string(), list_val)])
+                Ok(vec![("send".to_string(), list_val)])
             }
             _ => Err(format!("Unknown input port {} for Collector", port)),
         }
@@ -41,7 +41,7 @@ pub struct JoinNode;
 
 impl NativeNode for JoinNode {
     fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, String> {
-        let mut state = ctx.state_store.get_node_state(ctx.trace_id, ctx.node_idx);
+        let mut state = ctx.state_store.get_node_state(ctx.trace_id, ctx.node_idx).unwrap_or_else(HashMap::new);
         
         match port {
             "a" | "b" => {
@@ -51,7 +51,7 @@ impl NativeNode for JoinNode {
                     let a = state.remove("a").unwrap();
                     let b = state.remove("b").unwrap();
                     ctx.state_store.set_node_state(ctx.trace_id, ctx.node_idx, state);
-                    Ok(vec![("out".to_string(), Value::List(vec![a, b]))])
+                    Ok(vec![("send".to_string(), Value::List(vec![a, b]))])
                 } else {
                     ctx.state_store.set_node_state(ctx.trace_id, ctx.node_idx, state);
                     Ok(Vec::new())

@@ -21,6 +21,8 @@ pub enum DanaType {
     Byte,
     /// Stream of values of type T
     Stream(Box<DanaType>),
+    /// List of values of type T
+    List(Box<DanaType>),
     /// Unit type (for triggers/signals)
     Unit,
     /// Type definition: Name, Fields
@@ -38,6 +40,7 @@ impl fmt::Display for DanaType {
             DanaType::Bool => write!(f, "Bool"),
             DanaType::Byte => write!(f, "Byte"),
             DanaType::Stream(inner) => write!(f, "Stream<{}>", inner),
+            DanaType::List(inner) => write!(f, "List<{}>", inner),
             DanaType::Unit => write!(f, "Unit"),
             DanaType::Type(name, _) => write!(f, "{}", name),
             DanaType::Any => write!(f, "Any"),
@@ -74,6 +77,11 @@ impl TypeChecker {
             
             // Stream compatibility - inner types must match
             (DanaType::Stream(s), DanaType::Stream(t)) => {
+                Self::are_compatible(s, t)
+            }
+            
+            // List compatibility - inner types must match
+            (DanaType::List(s), DanaType::List(t)) => {
                 Self::are_compatible(s, t)
             }
             

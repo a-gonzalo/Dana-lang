@@ -103,7 +103,7 @@ impl ExecutableGraph {
             input_ports.insert("reset".to_string(), DanaType::Unit);
             
             let mut output_ports = HashMap::new();
-            output_ports.insert("out".to_string(), DanaType::Any); // Emits a list
+            output_ports.insert("send".to_string(), DanaType::Any); // Emits a list
             
             let rt_node = RuntimeNode::new_native(
                 name.clone(),
@@ -126,7 +126,7 @@ impl ExecutableGraph {
             input_ports.insert("b".to_string(), DanaType::Any);
             
             let mut output_ports = HashMap::new();
-            output_ports.insert("out".to_string(), DanaType::Any); // Emits a list/pair
+            output_ports.insert("send".to_string(), DanaType::Any); // Emits a list/pair
             
             let rt_node = RuntimeNode::new_native(
                 name.clone(),
@@ -294,7 +294,7 @@ mod tests {
         assert!(result.is_ok());
         let graph = result.unwrap();
         
-        assert_eq!(graph.graph.node_count(), 3); // Source + Target + System.IO
+        assert_eq!(graph.graph.node_count(), 5); // Source + Target + 3 System nodes (IO, Collector, Join)
         assert_eq!(graph.graph.edge_count(), 1);
     }
 
@@ -325,7 +325,7 @@ mod tests {
         
         let graph = ExecutableGraph::from_ast(ast).unwrap();
         
-        assert_eq!(graph.graph.node_count(), 3); // A + B + System.IO
+        assert_eq!(graph.graph.node_count(), 5); // A + B + 3 System nodes (IO, Collector, Join)
         assert_eq!(graph.graph.edge_count(), 1);
         assert!(graph.node_map.contains_key("A"));
         assert!(graph.node_map.contains_key("B"));

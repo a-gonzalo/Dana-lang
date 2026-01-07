@@ -14,6 +14,7 @@ pub enum Value {
     String(String),
     Bool(bool),
     Byte(u8),
+    List(Vec<Value>),
     // Streams are handled by the runtime channel mechanism, but we might need a representation here
     Unit,
 }
@@ -26,6 +27,14 @@ impl fmt::Display for Value {
             Value::String(v) => write!(f, "{}", v),
             Value::Bool(v) => write!(f, "{}", v),
             Value::Byte(v) => write!(f, "{:#04x}", v),
+            Value::List(v) => {
+                write!(f, "[")?;
+                for (i, item) in v.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", item)?;
+                }
+                write!(f, "]")
+            }
             Value::Unit => write!(f, "()"),
         }
     }
@@ -40,6 +49,14 @@ impl Value {
             Value::String(_) => DanaType::String,
             Value::Bool(_) => DanaType::Bool,
             Value::Byte(_) => DanaType::Byte,
+            Value::List(v) => {
+                let inner_type = if let Some(first) = v.first() {
+                    first.get_type()
+                } else {
+                    DanaType::Any // Empty list is List<Any>
+                };
+                DanaType::List(Box::new(inner_type))
+            }
             Value::Unit => DanaType::Unit,
         }
     }

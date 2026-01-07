@@ -83,7 +83,7 @@ impl Scheduler {
             .and_modify(|c| { c.fetch_add(1, std::sync::atomic::Ordering::SeqCst); })
             .or_insert(Arc::new(std::sync::atomic::AtomicUsize::new(1)));
 
-        self.trace_errors.entry(trace_id).or_insert(Arc::new(std::sync::atomic::Mutex::new(None)));
+        self.trace_errors.entry(trace_id).or_insert(Arc::new(std::sync::Mutex::new(None)));
         
         self.pulse_tx.send(Pulse::new(
             trace_id,
@@ -650,5 +650,63 @@ mod tests {
         assert!(triggered);
         
         scheduler.run().unwrap();
+    }
+
+    #[test]
+    fn test_join_node_integration() {
+        use crate::parser::parse_file;
+        use crate::runtime::native::{NativeNode, NativeContext};
+
+        let code = r#"
+            node CONST {
+                out value: Int = 35
+            }
+            node OTRO_CONST {
+                out patata : Int = 420
+            }
+            graph Main {
+                OTRO_CONST.patata -> System.Kernel.Join.a
+                CONST.value -> System.Kernel.Join.b
+                System.Kernel.Join.send -> System.IO.stdout
+            }
+        "#;
+
+        let ast = parse_file(code).unwrap();
+        let mut graph = ExecutableGraph::from_ast(ast).unwrap();
+
+        // Register a special Capture node instead of stdout to verify result
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = Arc::clone(&captured);
+
+        #[derive(Debug)]
+        struct CaptureNode {
+            target: Arc<Mutex<Vec<Value>>>,
+        }
+        impl NativeNode for CaptureNode {
+            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, String> {
+                let mut lock = self.target.lock().unwrap();
+                lock.push(value);
+                Ok(Vec::new())
+            }
+        }
+
+        let stdout_idx = *graph.node_map.get("System.IO").unwrap();
+        graph.graph[stdout_idx].kind = crate::runtime::node::NodeKind::Native(Box::new(CaptureNode { target: captured_clone }));
+
+        let mut scheduler = Scheduler::new(graph);
+        assert!(scheduler.auto_trigger().unwrap(), "Should have triggered constants");
+        
+        scheduler.run().unwrap();
+
+        let final_values = captured.lock().unwrap();
+        assert_eq!(final_values.len(), 1, "Should have received exactly one pulse from Join");
+        
+        if let Value::List(items) = &final_values[0] {
+            assert_eq!(items.len(), 2);
+            assert!(items.contains(&Value::Int(420)));
+            assert!(items.contains(&Value::Int(35)));
+        } else {
+            panic!("Expected Value::List, got {:?}", final_values[0]);
+        }
     }
 }

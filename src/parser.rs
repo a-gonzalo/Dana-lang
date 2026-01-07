@@ -559,8 +559,14 @@ fn parse_port_ref(pair: pest::iterators::Pair<Rule>) -> ParseResult<PortRef> {
         .map(|p| p.as_str().to_string())
         .collect();
 
-    if parts.len() < 2 {
-        return Err(ParseError::InvalidSyntax("Port reference must have at least Node.Port".to_string()));
+    if parts.is_empty() {
+        return Err(ParseError::InvalidSyntax("Empty port reference".to_string()));
+    }
+
+    if parts.len() == 1 {
+        // Single identifier: it's a port on the "current" graph/node
+        let port = parts.pop().unwrap();
+        return Ok(PortRef::new("", port));
     }
 
     let port = parts.pop().unwrap(); // Last one is port

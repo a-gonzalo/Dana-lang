@@ -709,4 +709,131 @@ mod tests {
             panic!("Expected Value::List, got {:?}", final_values[0]);
         }
     }
+
+    #[test]
+    fn test_factorial_loop() {
+        use crate::parser::parse_file;
+        use crate::runtime::native::{NativeNode, NativeContext};
+
+        let code = r#"
+            node CONSTANTS {
+                out five: Int = 5
+                out one: Int = 1
+            }
+            node Factorial  {
+                in num : Int
+                in acc : Int
+                out result : Int
+                out accumulator : Int
+                process: (num, acc) => {
+                    let next_num = num - 1
+                    let next_acc = acc * num
+                    emit result(next_num)
+                    emit accumulator(next_acc)
+                }
+            }
+            graph Main {
+                CONSTANTS.five -> Factorial.num
+                CONSTANTS.one  -> Factorial.acc
+                
+                Factorial.accumulator -> Factorial.acc
+                Factorial.result [result > 0] -> Factorial.num
+
+                Factorial.accumulator -> System.IO.stdout
+            }
+        "#;
+
+        let ast = parse_file(code).unwrap();
+        let mut graph = ExecutableGraph::from_ast(ast).unwrap();
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = Arc::clone(&captured);
+
+        #[derive(Debug)]
+        struct CaptureNode { target: Arc<Mutex<Vec<Value>>> }
+        impl NativeNode for CaptureNode {
+            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, String> {
+                self.target.lock().unwrap().push(value);
+                Ok(Vec::new())
+            }
+        }
+        let stdout_idx = *graph.node_map.get("System.IO").unwrap();
+        graph.graph[stdout_idx].kind = crate::runtime::node::NodeKind::Native(Box::new(CaptureNode { target: captured_clone }));
+
+        let mut scheduler = Scheduler::new(graph);
+        assert!(scheduler.auto_trigger().unwrap());
+        scheduler.run().unwrap();
+
+        let vals = captured.lock().unwrap();
+        // Sequence should include: 5, 20, 60, 120
+        assert!(vals.contains(&Value::Int(5)));
+        assert!(vals.contains(&Value::Int(20)));
+        assert!(vals.contains(&Value::Int(60)));
+        assert!(vals.contains(&Value::Int(120)));
+    }
+
+    #[test]
+    fn test_complex_hierarchical_factorial() {
+        use crate::parser::parse_file;
+        use crate::runtime::native::{NativeNode, NativeContext};
+
+        let code = r#"
+            node CONSTANTS {
+                out one : Int = 1
+                out five: Int = 5
+            }
+
+            graph Math {
+                node Sub {
+                    b : Int = 1
+                    in a : Int
+                    out result : Int
+                    process: (a,b) => {
+                        emit result (a-b)
+                    }
+                }
+            }
+
+            graph Factorial {
+                in num: Int
+                out result: Int
+
+                num [num <= 1] -> result
+                
+                num [num > 1] -> Math.Sub.a
+                
+                // Recursion: connect Sub.result back to Factorial.num
+                Math.Sub.result -> num
+            }
+
+            graph Main {
+                CONSTANTS.five -> Factorial.num
+                Factorial.result -> System.IO.stdout
+            }
+        "#;
+
+        let ast = parse_file(code).unwrap();
+        let mut graph = ExecutableGraph::from_ast(ast).unwrap();
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = Arc::clone(&captured);
+
+        #[derive(Debug)]
+        struct CaptureNode { target: Arc<Mutex<Vec<Value>>> }
+        impl NativeNode for CaptureNode {
+            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, String> {
+                self.target.lock().unwrap().push(value);
+                Ok(Vec::new())
+            }
+        }
+        let stdout_idx = *graph.node_map.get("System.IO").unwrap();
+        graph.graph[stdout_idx].kind = crate::runtime::node::NodeKind::Native(Box::new(CaptureNode { target: captured_clone }));
+
+        let mut scheduler = Scheduler::new(graph);
+        assert!(scheduler.auto_trigger().unwrap());
+        scheduler.run().unwrap();
+
+        let vals = captured.lock().unwrap();
+        assert!(vals.contains(&Value::Int(1)));
+    }
 }

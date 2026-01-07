@@ -50,11 +50,35 @@ impl ExecutableGraph {
             Self::add_node_to_graph(&mut graph, &mut node_map, ast_node)?;
         }
 
-        // 2. Add subgraph nodes (Flattening)
+        // 2. Add subgraph nodes (Hierarchical Flattening)
         for subgraph in &ast.subgraphs {
+            // Create a virtual node for the graph's own ports
+            // It is bi-directional: 
+            // - Internal nodes can consume from graph inputs (it's an output from our perspective)
+            // - Internal nodes can emit to graph outputs (it's an input from our perspective)
+            // - Internal nodes can emit to graph inputs for recursion!
+            let mut internal_ports = HashMap::new();
+            for port in subgraph.input_ports.iter().chain(subgraph.output_ports.iter()) {
+                internal_ports.insert(port.name.clone(), port.type_annotation.clone());
+            }
+
+            let virtual_node = RuntimeNode::new_dana(
+                subgraph.name.clone(),
+                NodeIndex::new(0),
+                internal_ports.clone(), // Inputs
+                internal_ports,         // Outputs
+                HashMap::new(),
+                None, // No process, just a port relay
+            );
+            let idx = graph.add_node(virtual_node);
+            graph[idx].index = idx;
+            node_map.insert(subgraph.name.clone(), idx);
+
+            let prefix = if subgraph.name.is_empty() { "".to_string() } else { format!("{}.", subgraph.name) };
             for ast_node in &subgraph.nodes {
-                // For now, we flatten the names. TODO: Support scoped names
-                Self::add_node_to_graph(&mut graph, &mut node_map, ast_node.clone())?;
+                let mut node_clone = ast_node.clone();
+                node_clone.name = format!("{}{}", prefix, ast_node.name);
+                Self::add_node_to_graph(&mut graph, &mut node_map, node_clone)?;
             }
         }
 
@@ -66,7 +90,27 @@ impl ExecutableGraph {
         // 4. Add subgraph edges
         for subgraph in &ast.subgraphs {
             for ast_edge in &subgraph.edges {
-                Self::validate_and_add_edge(&mut graph, &node_map, ast_edge)?;
+                let mut edge_clone = ast_edge.clone();
+                // Resolve empty node names to the subgraph node name
+                if edge_clone.source.node.is_empty() {
+                    edge_clone.source.node = subgraph.name.clone();
+                }
+                if edge_clone.target.node.is_empty() {
+                    edge_clone.target.node = subgraph.name.clone();
+                }
+
+                // Prefix internal node references if they don't contain a dot (and aren't system/graph nodes)
+                // Actually, if we allow cross-subgraph connections like Math.Sub.a, 
+                // we should probably check if the node exists as-is first.
+                
+                if !edge_clone.source.node.contains('.') && !node_map.contains_key(&edge_clone.source.node) {
+                     edge_clone.source.node = format!("{}.{}", subgraph.name, edge_clone.source.node);
+                }
+                if !edge_clone.target.node.contains('.') && !node_map.contains_key(&edge_clone.target.node) {
+                     edge_clone.target.node = format!("{}.{}", subgraph.name, edge_clone.target.node);
+                }
+
+                Self::validate_and_add_edge(&mut graph, &node_map, &edge_clone)?;
             }
         }
 
@@ -325,10 +369,11 @@ mod tests {
         
         let graph = ExecutableGraph::from_ast(ast).unwrap();
         
-        assert_eq!(graph.graph.node_count(), 5); // A + B + 3 System nodes (IO, Collector, Join)
+        println!("Node map keys: {:?}", graph.node_map.keys());
+        assert_eq!(graph.graph.node_count(), 6); // A + B + 3 System nodes (IO, Collector, Join) + 1 Subgraph node
         assert_eq!(graph.graph.edge_count(), 1);
-        assert!(graph.node_map.contains_key("A"));
-        assert!(graph.node_map.contains_key("B"));
+        assert!(graph.node_map.contains_key("Main.A"));
+        assert!(graph.node_map.contains_key("Main.B"));
     }
 
     #[test]

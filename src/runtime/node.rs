@@ -73,29 +73,33 @@ impl RuntimeNode {
 
     /// Execute the node logic triggered by a specific input
     pub fn execute(&self, trigger_port: &str, input_value: Value, trace_id: TraceId, state_store: &TraceStateStore) -> Result<ExecutionResult, String> {
-        let trace_state = state_store.get_node_state(trace_id, self.index);
+        // ALWAYS SAVE the incoming value to the trace state
+        let mut full_state = state_store.get_node_state(trace_id, self.index).unwrap_or_default();
+        full_state.insert(trigger_port.to_string(), input_value.clone());
+        state_store.set_node_state(trace_id, self.index, full_state.clone());
+
         match &self.kind {
             NodeKind::DanaProcess { properties, process } => {
                 let mut outputs = Vec::new();
                 
                 // If we have a process block, execute it
                 if let Some(process) = process {
-                    // Check if this port triggers the process
-                    if process.triggers.iter().any(|t| t == trigger_port) {
-                        // Create a local scope with (properties OR trace_state) + input value
-                        // In EPOS, the base properties are the default, but trace_state can override them?
-                        // Actually, properties are static config, trace_state is ephemeral data.
-                        let mut scope = properties.clone();
-                        // Overlay trace-specific state
-                        if let Some(state) = &trace_state {
-                            for (k, v) in state {
-                                scope.insert(k.clone(), v.clone());
-                            }
+                    // Implicit Join: Verify all required inputs are present in properties or state
+                    for req_port in &process.triggers {
+                        if !full_state.contains_key(req_port) && !properties.contains_key(req_port) {
+                            // Missing a required input, skip execution (it's persistent now, so we'll try again next pulse)
+                            return Ok(ExecutionResult { outputs: Vec::new() });
                         }
-                        scope.insert(trigger_port.to_string(), input_value);
-                        
-                        // Execute statements
-                        for stmt in &process.statements {
+                    }
+
+                    // Create a local scope with properties + trace_state
+                    let mut scope = properties.clone();
+                    for (k, v) in &full_state {
+                        scope.insert(k.clone(), v.clone());
+                    }
+                    
+                    // Execute statements
+                    for stmt in &process.statements {
                             match stmt {
                                 Statement::Emit { port, value } => {
                                     let val = Self::evaluate_expression(&value, &scope, properties)?;
@@ -110,13 +114,23 @@ impl RuntimeNode {
                                 }
                             }
                         }
-                    }
-                } else {
-                    // STATIC NODE LOGIC: Auto-emit properties to matching outputs
+
+                        // CONSUME inputs to prevent double-firing (Implicit synchronization)
+                        for req_port in &process.triggers {
+                            full_state.remove(req_port);
+                        }
+                        state_store.set_node_state(trace_id, self.index, full_state);
+                    } else {
+                    // STATIC/RELAY NODE LOGIC
+                    // 1. Auto-emit properties (Constants)
                     for (name, value) in properties {
                         if self.output_ports.contains_key(name) {
                             outputs.push((name.clone(), value.clone()));
                         }
+                    }
+                    // 2. Relay inputs to matching outputs (Virtual nodes / Pass-through)
+                    if self.output_ports.contains_key(trigger_port) {
+                        outputs.push((trigger_port.to_string(), input_value));
                     }
                 }
                 

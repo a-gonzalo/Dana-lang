@@ -121,10 +121,19 @@ impl ExecutableGraph {
         }
 
         let mut properties = HashMap::new();
+        // 1. Existing properties
         for prop in &ast_node.properties {
             if let Some(default_expr) = &prop.default_value {
                 if let Some(val) = Value::from_literal(default_expr) {
                     properties.insert(prop.name.clone(), val);
+                }
+            }
+        }
+        // 2. Default values from Ports (Shorthand)
+        for port in ast_node.input_ports.iter().chain(ast_node.output_ports.iter()) {
+            if let Some(default_expr) = &port.default_value {
+                if let Some(val) = Value::from_literal(default_expr) {
+                    properties.insert(port.name.clone(), val);
                 }
             }
         }
@@ -215,12 +224,14 @@ mod tests {
             .with_output(Port {
                 name: "out".to_string(),
                 type_annotation: DanaType::Int,
+                default_value: None,
             });
         
         let target = Node::new("Target")
             .with_input(Port {
                 name: "in".to_string(),
                 type_annotation: DanaType::Int,
+                default_value: None,
             });
 
         ast.add_node(source);
@@ -251,8 +262,8 @@ mod tests {
             input_ports: Vec::new(),
             output_ports: Vec::new(),
             nodes: vec![
-                Node::new("A").with_output(Port { name: "out".to_string(), type_annotation: DanaType::Int }),
-                Node::new("B").with_input(Port { name: "in".to_string(), type_annotation: DanaType::Int }),
+                Node::new("A").with_output(Port { name: "out".to_string(), type_annotation: DanaType::Int, default_value: None }),
+                Node::new("B").with_input(Port { name: "in".to_string(), type_annotation: DanaType::Int, default_value: None }),
             ],
             edges: vec![
                 AstEdge {
@@ -279,8 +290,8 @@ mod tests {
         let mut ast = AstGraph::new();
         
         // NodeA(in x) -> NodeB(in y)
-        let a = Node::new("NodeA").with_input(Port { name: "x".to_string(), type_annotation: DanaType::Int });
-        let b = Node::new("NodeB").with_input(Port { name: "y".to_string(), type_annotation: DanaType::Int });
+        let a = Node::new("NodeA").with_input(Port { name: "x".to_string(), type_annotation: DanaType::Int, default_value: None });
+        let b = Node::new("NodeB").with_input(Port { name: "y".to_string(), type_annotation: DanaType::Int, default_value: None });
         
         ast.add_node(a);
         ast.add_node(b);
@@ -330,7 +341,7 @@ mod tests {
     #[test]
     fn test_stdout_accepts_any() {
         let mut ast = AstGraph::new();
-        let node = Node::new("Source").with_output(Port { name: "out".to_string(), type_annotation: DanaType::Int });
+        let node = Node::new("Source").with_output(Port { name: "out".to_string(), type_annotation: DanaType::Int, default_value: None });
         ast.add_node(node);
         ast.add_edge(AstEdge {
             source: PortRef::new("Source", "out"),
@@ -351,12 +362,14 @@ mod tests {
             .with_output(Port {
                 name: "out".to_string(),
                 type_annotation: DanaType::String, // String output
+                default_value: None,
             });
         
         let target = Node::new("Target")
             .with_input(Port {
                 name: "in".to_string(),
                 type_annotation: DanaType::Int, // Int input
+                default_value: None,
             });
 
         ast.add_node(source);

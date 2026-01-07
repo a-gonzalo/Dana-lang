@@ -377,12 +377,12 @@ mod tests {
         };
         
         let mut source = Node::new("Source");
-        source.input_ports.push(Port { name: "start".to_string(), type_annotation: DanaType::Unit });
-        source.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int });
+        source.input_ports.push(Port { name: "start".to_string(), type_annotation: DanaType::Unit, default_value: None });
+        source.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int, default_value: None });
         source.process = Some(process);
         
         let mut target = Node::new("Target");
-        target.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int });
+        target.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int, default_value: None });
         
         ast.add_node(source);
         ast.add_node(target);
@@ -430,13 +430,13 @@ mod tests {
         };
         
         let mut source = Node::new("Source");
-        source.input_ports.push(Port { name: "start".to_string(), type_annotation: DanaType::Int });
-        source.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int });
+        source.input_ports.push(Port { name: "start".to_string(), type_annotation: DanaType::Int, default_value: None });
+        source.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int, default_value: None });
         source.process = Some(process);
         
         // Target (Failer)
         let mut target = Node::new("Failer");
-        target.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int });
+        target.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int, default_value: None });
         
         ast.add_node(source);
         ast.add_node(target);
@@ -501,12 +501,12 @@ mod tests {
         };
         
         let mut source = Node::new("Source");
-        source.input_ports.push(Port { name: "start".to_string(), type_annotation: DanaType::Int });
-        source.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int });
+        source.input_ports.push(Port { name: "start".to_string(), type_annotation: DanaType::Int, default_value: None });
+        source.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int, default_value: None });
         source.process = Some(process);
         
         let mut target = Node::new("Failer");
-        target.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int });
+        target.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int, default_value: None });
         
         ast.add_node(source);
         ast.add_node(target);
@@ -567,8 +567,8 @@ mod tests {
         };
         
         let mut node = Node::new("Looper");
-        node.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int });
-        node.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int });
+        node.input_ports.push(Port { name: "in".to_string(), type_annotation: DanaType::Int, default_value: None });
+        node.output_ports.push(Port { name: "out".to_string(), type_annotation: DanaType::Int, default_value: None });
         node.process = Some(process);
         
         ast.add_node(node);

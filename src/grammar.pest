@@ -115,7 +115,7 @@ property_decl = {
 
 // Port declaration
 port_decl = {
-    identifier ~ ":" ~ dana_type
+    identifier ~ ":" ~ dana_type ~ ("=" ~ expression)?
 }
 
 // Struct declaration

@@ -191,9 +191,12 @@ fn parse_port(pair: pest::iterators::Pair<Rule>) -> ParseResult<Port> {
             .ok_or_else(|| ParseError::InvalidSyntax("Missing port type".to_string()))?,
     )?;
 
+    let default_value = inner.next().map(parse_expression).transpose()?;
+
     Ok(Port {
         name,
         type_annotation,
+        default_value,
     })
 }
 

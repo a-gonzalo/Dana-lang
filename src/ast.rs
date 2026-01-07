@@ -56,6 +56,7 @@ pub struct Property {
 pub struct Port {
     pub name: String,
     pub type_annotation: DanaType,
+    pub default_value: Option<Expression>,
 }
 
 /// Process logic block
@@ -281,10 +282,12 @@ mod tests {
             .with_input(Port {
                 name: "increment".to_string(),
                 type_annotation: DanaType::Unit,
+                default_value: None,
             })
             .with_output(Port {
                 name: "current".to_string(),
                 type_annotation: DanaType::Int,
+                default_value: None,
             });
 
         assert_eq!(node.name, "Counter");

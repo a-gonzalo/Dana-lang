@@ -4,7 +4,9 @@
 
 use crate::ast::{Expression, ProcessBlock, Statement, BinaryOperator};
 use crate::runtime::value::Value;
-use crate::runtime::native::NativeNode;
+use crate::runtime::native::{NativeNode, NativeContext};
+use crate::runtime::pulse::TraceId;
+use crate::runtime::scheduler::TraceStateStore;
 use crate::types::DanaType;
 use petgraph::graph::NodeIndex;
 use std::collections::HashMap;
@@ -70,7 +72,8 @@ impl RuntimeNode {
     }
 
     /// Execute the node logic triggered by a specific input
-    pub fn execute(&self, trigger_port: &str, input_value: Value, trace_state: &HashMap<String, Value>) -> Result<ExecutionResult, String> {
+    pub fn execute(&self, trigger_port: &str, input_value: Value, trace_id: TraceId, state_store: &TraceStateStore) -> Result<ExecutionResult, String> {
+        let trace_state = state_store.get_node_state(trace_id, self.index);
         match &self.kind {
             NodeKind::DanaProcess { properties, process } => {
                 let mut outputs = Vec::new();
@@ -118,7 +121,12 @@ impl RuntimeNode {
                 Ok(ExecutionResult { outputs })
             },
             NodeKind::Native(native_node) => {
-                let outputs = native_node.on_input(trigger_port, input_value)?;
+                let ctx = NativeContext {
+                    trace_id,
+                    node_idx: self.index,
+                    state_store,
+                };
+                let outputs = native_node.on_input(trigger_port, input_value, &ctx)?;
                 Ok(ExecutionResult { outputs })
             }
         }

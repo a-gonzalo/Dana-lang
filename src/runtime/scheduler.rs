@@ -230,21 +230,12 @@ impl Scheduler {
         trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<String>>>>>
     ) -> Result<(), String> {
         // 1. Get current node state from TraceStateStore
+        let node = &graph.graph[pulse.target_node];
         let trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)
             .unwrap_or_else(HashMap::new);
 
         // 2. Execute the target node
-        let result_raw = {
-            let node = &graph.graph[pulse.target_node];
-            
-            if !node.input_ports.contains_key(&pulse.target_port) {
-                 return Err(format!("Node '{}' has no input port '{}'", node.name, pulse.target_port));
-            }
-
-            node.execute(&pulse.target_port, pulse.payload.clone(), &trace_state)
-        };
-
-        let result = match result_raw {
+        let result = match node.execute(&pulse.target_port, pulse.payload.clone(), pulse.trace_id, state_store) {
             Ok(res) => res,
             Err(e) => {
                 // Record error in tracker
@@ -461,7 +452,7 @@ mod tests {
         #[derive(Debug)]
         struct FailNode;
         impl crate::runtime::native::NativeNode for FailNode {
-            fn on_input(&self, _port: &str, _value: Value) -> Result<Vec<(String, Value)>, String> {
+            fn on_input(&self, _port: &str, _value: Value, _ctx: &crate::runtime::native::NativeContext) -> Result<Vec<(String, Value)>, String> {
                 Err("FailNode executed".to_string())
             }
         }

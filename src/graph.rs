@@ -94,6 +94,52 @@ impl ExecutableGraph {
             graph[idx].index = idx;
             node_map.insert(name, idx);
         }
+
+        // System.Kernel.Collector
+        let name = "System.Kernel.Collector".to_string();
+        if !node_map.contains_key(&name) {
+            let mut input_ports = HashMap::new();
+            input_ports.insert("in".to_string(), DanaType::Any);
+            input_ports.insert("reset".to_string(), DanaType::Unit);
+            
+            let mut output_ports = HashMap::new();
+            output_ports.insert("out".to_string(), DanaType::Any); // Emits a list
+            
+            let rt_node = RuntimeNode::new_native(
+                name.clone(),
+                NodeIndex::new(0),
+                input_ports,
+                output_ports,
+                Box::new(crate::stdlib::kernel::CollectorNode),
+            );
+            
+            let idx = graph.add_node(rt_node);
+            graph[idx].index = idx;
+            node_map.insert(name, idx);
+        }
+
+        // System.Kernel.Join
+        let name = "System.Kernel.Join".to_string();
+        if !node_map.contains_key(&name) {
+            let mut input_ports = HashMap::new();
+            input_ports.insert("a".to_string(), DanaType::Any);
+            input_ports.insert("b".to_string(), DanaType::Any);
+            
+            let mut output_ports = HashMap::new();
+            output_ports.insert("out".to_string(), DanaType::Any); // Emits a list/pair
+            
+            let rt_node = RuntimeNode::new_native(
+                name.clone(),
+                NodeIndex::new(0),
+                input_ports,
+                output_ports,
+                Box::new(crate::stdlib::kernel::JoinNode),
+            );
+            
+            let idx = graph.add_node(rt_node);
+            graph[idx].index = idx;
+            node_map.insert(name, idx);
+        }
     }
 
     fn add_node_to_graph(

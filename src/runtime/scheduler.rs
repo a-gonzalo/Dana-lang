@@ -2,21 +2,11 @@ use crate::graph::ExecutableGraph;
 use crate::runtime::value::Value;
 use crate::runtime::pulse::{Pulse, TraceId};
 use petgraph::graph::NodeIndex;
-use std::collections::VecDeque;
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use crate::runtime::node::{RuntimeNode, NodeKind}; 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-
-/// An event in the system (Legacy, will be replaced by Pulse)
-#[derive(Debug, Clone)]
-pub struct Event {
-    pub target_node: NodeIndex,
-    pub target_port: String,
-    pub payload: Value,
-}
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use dashmap::DashMap;
 use crossbeam_channel::{Sender, Receiver, unbounded};

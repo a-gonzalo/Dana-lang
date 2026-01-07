@@ -209,6 +209,7 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<DanaType> {
         Rule::type_bool => Ok(DanaType::Bool),
         Rule::type_byte => Ok(DanaType::Byte),
         Rule::type_unit => Ok(DanaType::Unit),
+        Rule::type_any => Ok(DanaType::Any),
         Rule::type_stream => {
             let inner_type = parse_type(
                 inner

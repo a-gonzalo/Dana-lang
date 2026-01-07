@@ -1,9 +1,10 @@
 use crate::graph::ExecutableGraph;
 use crate::runtime::value::Value;
 use crate::runtime::pulse::{Pulse, TraceId};
-use petgraph::graph::NodeIndex;
+use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
+use crate::types::DanaType;
 use crate::runtime::node::{RuntimeNode, NodeKind}; 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -86,6 +87,28 @@ impl Scheduler {
         )).map_err(|e| format!("Failed to send initial pulse: {}", e))?;
 
         Ok(())
+    }
+
+    /// Automatically trigger all Input ports of type Unit/Impulse
+    pub fn auto_trigger(&mut self) -> Result<bool, String> {
+        let mut triggered = false;
+        let mut to_trigger = Vec::new();
+
+        for node_idx in self.graph.graph.node_indices() {
+            let node = &self.graph.graph[node_idx];
+            for (port_name, port_type) in &node.input_ports {
+                if *port_type == DanaType::Unit {
+                    to_trigger.push((node.name.clone(), port_name.clone()));
+                }
+            }
+        }
+
+        for (node_name, port_name) in to_trigger {
+            self.inject_event(&node_name, &port_name, Value::Unit)?;
+            triggered = true;
+        }
+
+        Ok(triggered)
     }
 
     /// Run the scheduler until all traces are finished
@@ -218,7 +241,7 @@ impl Scheduler {
                  return Err(format!("Node '{}' has no input port '{}'", node.name, pulse.target_port));
             }
 
-            node.execute(&pulse.target_port, pulse.payload, &trace_state)
+            node.execute(&pulse.target_port, pulse.payload.clone(), &trace_state)
         };
 
         let result = match result_raw {
@@ -237,54 +260,93 @@ impl Scheduler {
 
         // 3. Propagate outputs to connected downstream nodes
         for (out_port, out_value) in result.outputs {
-            let mut outgoing_pulses = Vec::new();
-            
-            for edge in graph.graph.edges_directed(pulse.target_node, Direction::Outgoing) {
-                 if edge.weight().source_port == out_port {
-                     // Guard check
-                     if let Some(guard) = &edge.weight().guard {
-                         let source_node = &graph.graph[pulse.target_node];
-                         let properties = match &source_node.kind {
-                             NodeKind::DanaProcess { properties, .. } => Some(properties),
-                             _ => None,
-                         };
-                         
-                         let empty_props = HashMap::new();
-                         let props_ref = properties.unwrap_or(&empty_props);
+            Self::propagate_from_port(
+                pulse.target_node,
+                &out_port,
+                &out_value,
+                &trace_state,
+                graph,
+                tx,
+                tracker,
+                pulse.trace_id,
+                pulse.depth + 1
+            );
+        }
 
-                         let mut scope = HashMap::new();
-                         scope.insert(out_port.clone(), out_value.clone());
-                         for (k, v) in &trace_state {
-                             scope.insert(k.clone(), v.clone());
-                         }
+        // 4. Propagate the input value itself if there are edges connected to it (lifting/forking)
+        Self::propagate_from_port(
+            pulse.target_node,
+            &pulse.target_port,
+            &pulse.payload,
+            &trace_state,
+            graph,
+            tx,
+            tracker,
+            pulse.trace_id,
+            pulse.depth + 1
+        );
 
-                         match RuntimeNode::evaluate_expression(&guard.condition, &scope, props_ref) {
-                             Ok(Value::Bool(true)) => {},
-                             Ok(Value::Bool(false)) => continue,
-                             _ => continue,
-                         }
+        Ok(())
+    }
+
+    fn propagate_from_port(
+        source_idx: NodeIndex,
+        source_port: &str,
+        value: &Value,
+        trace_state: &HashMap<String, Value>,
+        graph: &Arc<ExecutableGraph>,
+        tx: &Sender<Pulse>,
+        tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
+        trace_id: TraceId,
+        depth: u32
+    ) {
+        let mut outgoing_pulses = Vec::new();
+        
+        for edge in graph.graph.edges_directed(source_idx, Direction::Outgoing) {
+             if edge.weight().source_port == source_port {
+                 // Guard check
+                 if let Some(guard) = &edge.weight().guard {
+                     let source_node = &graph.graph[source_idx];
+                     let properties = match &source_node.kind {
+                         NodeKind::DanaProcess { properties, .. } => Some(properties),
+                         _ => None,
+                     };
+                     
+                     let empty_props = HashMap::new();
+                     let props_ref = properties.unwrap_or(&empty_props);
+
+                     let mut scope = HashMap::new();
+                     scope.insert(source_port.to_string(), value.clone());
+                     for (k, v) in trace_state {
+                         scope.insert(k.clone(), v.clone());
                      }
-                     outgoing_pulses.push((edge.target(), edge.weight().target_port.clone()));
-                 }
-            }
 
-            // Update tracker with new pulses BEFORE sending them
-            if let Some(counter) = tracker.get(&pulse.trace_id) {
+                     match RuntimeNode::evaluate_expression(&guard.condition, &scope, props_ref) {
+                         Ok(Value::Bool(true)) => {},
+                         Ok(Value::Bool(false)) => continue,
+                         _ => continue,
+                     }
+                 }
+                 outgoing_pulses.push((edge.target(), edge.weight().target_port.clone()));
+             }
+        }
+
+        // Update tracker with new pulses BEFORE sending them
+        if !outgoing_pulses.is_empty() {
+            if let Some(counter) = tracker.get(&trace_id) {
                 counter.fetch_add(outgoing_pulses.len(), Ordering::SeqCst);
             }
 
             for (target_idx, target_port) in outgoing_pulses {
-                tx.send(Pulse::new(
-                    pulse.trace_id,
+                let _ = tx.send(Pulse::new(
+                    trace_id,
                     target_idx,
                     target_port,
-                    out_value.clone(),
-                    pulse.depth + 1,
-                )).map_err(|e| format!("Failed to send pulse: {}", e))?;
+                    value.clone(),
+                    depth,
+                ));
             }
         }
-
-        Ok(())
     }
 }
 
@@ -526,5 +588,64 @@ mod tests {
         
         assert!(res.is_err(), "Infinite loop should be detected and return Err");
         assert!(res.err().unwrap().contains("Max execution depth reached"));
+    }
+
+    #[test]
+    fn test_static_node_and_auto_trigger() {
+        let mut graph = DiGraph::new();
+        let mut node_map = HashMap::new();
+
+        // Node A: Static (no process), 0 inputs (source)
+        let mut a_outputs = HashMap::new();
+        a_outputs.insert("val".to_string(), DanaType::Int);
+        let mut a_props = HashMap::new();
+        a_props.insert("val".to_string(), Value::Int(42));
+        
+        // Add implicit _start port
+        let mut a_inputs = HashMap::new();
+        a_inputs.insert("_start".to_string(), DanaType::Unit);
+
+        let node_a = RuntimeNode::new_dana(
+            "NodeA".to_string(),
+            NodeIndex::new(0),
+            a_inputs,
+            a_outputs,
+            a_props,
+            None,
+        );
+        let idx_a = graph.add_node(node_a);
+        node_map.insert("NodeA".to_string(), idx_a);
+
+        // Node B: Collector
+        let mut b_inputs = HashMap::new();
+        b_inputs.insert("in".to_string(), DanaType::Int);
+        let node_b = RuntimeNode::new_dana(
+            "NodeB".to_string(),
+            NodeIndex::new(0),
+            b_inputs,
+            HashMap::new(),
+            HashMap::new(),
+            Some(crate::ast::ProcessBlock {
+                triggers: vec!["in".to_string()],
+                statements: vec![], 
+            }),
+        );
+        let idx_b = graph.add_node(node_b);
+        node_map.insert("NodeB".to_string(), idx_b);
+
+        graph.add_edge(idx_a, idx_b, crate::graph::RuntimeEdge {
+            source_port: "val".to_string(),
+            target_port: "in".to_string(),
+            edge_type: crate::ast::EdgeType::Sync,
+            guard: None,
+        });
+
+        let mut scheduler = Scheduler::new(ExecutableGraph { graph, node_map });
+        
+        // Verify auto-trigger finds NodeA._start
+        let triggered = scheduler.auto_trigger().unwrap();
+        assert!(triggered);
+        
+        scheduler.run().unwrap();
     }
 }

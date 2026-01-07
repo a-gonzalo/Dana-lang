@@ -106,6 +106,13 @@ impl RuntimeNode {
                             }
                         }
                     }
+                } else {
+                    // STATIC NODE LOGIC: Auto-emit properties to matching outputs
+                    for (name, value) in properties {
+                        if self.output_ports.contains_key(name) {
+                            outputs.push((name.clone(), value.clone()));
+                        }
+                    }
                 }
                 
                 Ok(ExecutionResult { outputs })

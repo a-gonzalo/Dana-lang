@@ -42,79 +42,106 @@ impl ExecutableGraph {
         let mut graph = DiGraph::new();
         let mut node_map = HashMap::new();
 
-        // Pre-register Standard Library Nodes
-        
-        // System.IO
-        {
-            let name = "System.IO".to_string();
-            if !node_map.contains_key(&name) {
-                let mut input_ports = HashMap::new();
-                input_ports.insert("stdout".to_string(), DanaType::String); // Accepting String (auto-converted)
-                
-                let output_ports = HashMap::new();
-                // input_ports.insert("stdin".to_string(), DanaType::String); 
-                
-                let rt_node = RuntimeNode::new_native(
-                    name.clone(),
-                    NodeIndex::new(0),
-                    input_ports,
-                    output_ports,
-                    Box::new(crate::stdlib::io::SystemIONode),
-                );
-                
-                let idx = graph.add_node(rt_node);
-                graph[idx].index = idx;
-                node_map.insert(name, idx);
-            }
-        }
+        // 0. Pre-register Standard Library Nodes
+        Self::add_system_nodes(&mut graph, &mut node_map);
 
-        // 1. Add all nodes to the graph
+        // 1. Add top-level nodes
         for ast_node in ast.nodes {
-            if node_map.contains_key(&ast_node.name) {
-                return Err(BuildError::DuplicateNode(ast_node.name.clone()));
-            }
-
-            let mut input_ports = HashMap::new();
-            for port in &ast_node.input_ports {
-                input_ports.insert(port.name.clone(), port.type_annotation.clone());
-            }
-
-            let mut output_ports = HashMap::new();
-            for port in &ast_node.output_ports {
-                output_ports.insert(port.name.clone(), port.type_annotation.clone());
-            }
-
-            // Initialize properties with default values
-            let mut properties = HashMap::new();
-            for prop in &ast_node.properties {
-                if let Some(default_expr) = &prop.default_value {
-                    // Evaluate simple literals immediately
-                    if let Some(val) = Value::from_literal(default_expr) {
-                        properties.insert(prop.name.clone(), val);
-                    }
-                }
-            }
-
-            let rt_node = RuntimeNode::new_dana(
-                ast_node.name.clone(),
-                NodeIndex::new(0), // Placeholder
-                input_ports,
-                output_ports,
-                properties,
-                ast_node.process.clone(),
-            );
-
-            let idx = graph.add_node(rt_node);
-            graph[idx].index = idx; // Update self-reference index
-            node_map.insert(ast_node.name.clone(), idx);
+            Self::add_node_to_graph(&mut graph, &mut node_map, ast_node)?;
         }
 
-        // 2. Add edges and validate connections
+        // 2. Add subgraph nodes (Flattening)
+        for subgraph in &ast.subgraphs {
+            for ast_node in &subgraph.nodes {
+                // For now, we flatten the names. TODO: Support scoped names
+                Self::add_node_to_graph(&mut graph, &mut node_map, ast_node.clone())?;
+            }
+        }
+
+        // 3. Add top-level edges
         for ast_edge in ast.edges {
             Self::validate_and_add_edge(&mut graph, &node_map, &ast_edge)?;
         }
 
+        // 4. Add subgraph edges
+        for subgraph in &ast.subgraphs {
+            for ast_edge in &subgraph.edges {
+                Self::validate_and_add_edge(&mut graph, &node_map, ast_edge)?;
+            }
+        }
+
         Ok(Self { graph, node_map })
+    }
+
+    fn add_system_nodes(graph: &mut DiGraph<RuntimeNode, RuntimeEdge>, node_map: &mut HashMap<String, NodeIndex>) {
+        // System.IO
+        let name = "System.IO".to_string();
+        if !node_map.contains_key(&name) {
+            let mut input_ports = HashMap::new();
+            input_ports.insert("stdout".to_string(), DanaType::Any);
+            
+            let output_ports = HashMap::new();
+            
+            let rt_node = RuntimeNode::new_native(
+                name.clone(),
+                NodeIndex::new(0),
+                input_ports,
+                output_ports,
+                Box::new(crate::stdlib::io::SystemIONode),
+            );
+            
+            let idx = graph.add_node(rt_node);
+            graph[idx].index = idx;
+            node_map.insert(name, idx);
+        }
+    }
+
+    fn add_node_to_graph(
+        graph: &mut DiGraph<RuntimeNode, RuntimeEdge>, 
+        node_map: &mut HashMap<String, NodeIndex>,
+        ast_node: crate::ast::Node
+    ) -> Result<(), BuildError> {
+        if node_map.contains_key(&ast_node.name) {
+            return Err(BuildError::DuplicateNode(ast_node.name.clone()));
+        }
+
+        let mut input_ports = HashMap::new();
+        for port in &ast_node.input_ports {
+            input_ports.insert(port.name.clone(), port.type_annotation.clone());
+        }
+
+        // Add implicit '_start' port for nodes with 0 inputs (source nodes)
+        if input_ports.is_empty() {
+            input_ports.insert("_start".to_string(), DanaType::Unit);
+        }
+
+        let mut output_ports = HashMap::new();
+        for port in &ast_node.output_ports {
+            output_ports.insert(port.name.clone(), port.type_annotation.clone());
+        }
+
+        let mut properties = HashMap::new();
+        for prop in &ast_node.properties {
+            if let Some(default_expr) = &prop.default_value {
+                if let Some(val) = Value::from_literal(default_expr) {
+                    properties.insert(prop.name.clone(), val);
+                }
+            }
+        }
+
+        let rt_node = RuntimeNode::new_dana(
+            ast_node.name.clone(),
+            NodeIndex::new(0),
+            input_ports,
+            output_ports,
+            properties,
+            ast_node.process.clone(),
+        );
+
+        let idx = graph.add_node(rt_node);
+        graph[idx].index = idx;
+        node_map.insert(ast_node.name.clone(), idx);
+        Ok(())
     }
 
     fn validate_and_add_edge(
@@ -137,6 +164,7 @@ impl ExecutableGraph {
         let source_type = source_node
             .output_ports
             .get(&edge.source.port)
+            .or_else(|| source_node.input_ports.get(&edge.source.port)) // Check input ports too
             .ok_or_else(|| {
                 BuildError::PortNotFound(edge.source.node.clone(), edge.source.port.clone())
             })?
@@ -214,6 +242,60 @@ mod tests {
     }
 
     #[test]
+    fn test_build_with_subgraphs() {
+        let mut ast = AstGraph::new();
+        
+        let subgraph = crate::ast::GraphDef {
+            name: "Main".to_string(),
+            properties: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            nodes: vec![
+                Node::new("A").with_output(Port { name: "out".to_string(), type_annotation: DanaType::Int }),
+                Node::new("B").with_input(Port { name: "in".to_string(), type_annotation: DanaType::Int }),
+            ],
+            edges: vec![
+                AstEdge {
+                    source: PortRef::new("A", "out"),
+                    target: PortRef::new("B", "in"),
+                    edge_type: EdgeType::Sync,
+                    guard: None,
+                }
+            ],
+        };
+        
+        ast.subgraphs.push(subgraph);
+        
+        let graph = ExecutableGraph::from_ast(ast).unwrap();
+        
+        assert_eq!(graph.graph.node_count(), 3); // A + B + System.IO
+        assert_eq!(graph.graph.edge_count(), 1);
+        assert!(graph.node_map.contains_key("A"));
+        assert!(graph.node_map.contains_key("B"));
+    }
+
+    #[test]
+    fn test_input_port_as_edge_source() {
+        let mut ast = AstGraph::new();
+        
+        // NodeA(in x) -> NodeB(in y)
+        let a = Node::new("NodeA").with_input(Port { name: "x".to_string(), type_annotation: DanaType::Int });
+        let b = Node::new("NodeB").with_input(Port { name: "y".to_string(), type_annotation: DanaType::Int });
+        
+        ast.add_node(a);
+        ast.add_node(b);
+        ast.add_edge(AstEdge {
+            source: PortRef::new("NodeA", "x"), // Input port as source!
+            target: PortRef::new("NodeB", "y"),
+            edge_type: EdgeType::Sync,
+            guard: None,
+        });
+
+        let result = ExecutableGraph::from_ast(ast);
+        assert!(result.is_ok(), "Should allow input port as edge source");
+    }
+
+    #[test]
     fn test_missing_node_error() {
         let mut ast = AstGraph::new();
         // Add edge referencing missing nodes
@@ -243,6 +325,22 @@ mod tests {
 
         let result = ExecutableGraph::from_ast(ast);
         assert!(matches!(result, Err(BuildError::PortNotFound(_, _))));
+    }
+
+    #[test]
+    fn test_stdout_accepts_any() {
+        let mut ast = AstGraph::new();
+        let node = Node::new("Source").with_output(Port { name: "out".to_string(), type_annotation: DanaType::Int });
+        ast.add_node(node);
+        ast.add_edge(AstEdge {
+            source: PortRef::new("Source", "out"),
+            target: PortRef::new("System.IO", "stdout"),
+            edge_type: EdgeType::Sync,
+            guard: None,
+        });
+
+        let result = ExecutableGraph::from_ast(ast);
+        assert!(result.is_ok(), "stdout should accept Int via Any");
     }
 
     #[test]

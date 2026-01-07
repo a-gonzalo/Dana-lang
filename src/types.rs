@@ -25,6 +25,8 @@ pub enum DanaType {
     Unit,
     /// Type definition: Name, Fields
     Type(String, Vec<(String, DanaType)>),
+    /// Any type (universal compatibility)
+    Any,
 }
 
 impl fmt::Display for DanaType {
@@ -38,6 +40,7 @@ impl fmt::Display for DanaType {
             DanaType::Stream(inner) => write!(f, "Stream<{}>", inner),
             DanaType::Unit => write!(f, "Unit"),
             DanaType::Type(name, _) => write!(f, "{}", name),
+            DanaType::Any => write!(f, "Any"),
         }
     }
 }
@@ -81,6 +84,9 @@ impl TypeChecker {
             
             // Int can be promoted to Float
             (DanaType::Int, DanaType::Float) => true,
+            
+            // Any can accept anything
+            (_, DanaType::Any) => true,
             
             // Everything else is incompatible
             _ => false,
@@ -128,6 +134,14 @@ mod tests {
 
         assert!(TypeChecker::are_compatible(&stream_int, &stream_int2));
         assert!(!TypeChecker::are_compatible(&stream_int, &stream_string));
+    }
+
+    #[test]
+    fn test_any_compatibility() {
+        assert!(TypeChecker::are_compatible(&DanaType::Int, &DanaType::Any));
+        assert!(TypeChecker::are_compatible(&DanaType::String, &DanaType::Any));
+        assert!(TypeChecker::are_compatible(&DanaType::Bool, &DanaType::Any));
+        assert!(TypeChecker::are_compatible(&DanaType::Type("Custom".to_string(), vec![]), &DanaType::Any));
     }
 
     #[test]

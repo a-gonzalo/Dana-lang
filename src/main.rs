@@ -120,8 +120,11 @@ fn run_program(path: PathBuf, trigger: Option<String>, val_str: Option<String>) 
 
         scheduler.inject_event(&node, *port, val)?;
     } else {
-        println!("No trigger specified. Graph loaded but no events injected.");
-        println!("Use --trigger Node.Port to start execution.");
+        // Automatically find and trigger all Impulse/Unit ports
+        if !scheduler.auto_trigger()? {
+            println!("No trigger specified and no Impulse ports found. Graph loaded but no events injected.");
+            println!("Use --trigger Node.Port to start execution.");
+        }
     }
 
     scheduler.run()?;

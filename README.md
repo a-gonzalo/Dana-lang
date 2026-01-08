@@ -1,35 +1,207 @@
-# Dana Language (v0.1.0 MVP)
+# Dana Language v0.2
 
-Dana is a **Graph-Oriented Programming Language** designed for high-performance, predictable data-flow applications. Programs in Dana are defined as directed graphs where nodes represent processing units and edges represent data flow.
+**Dana** is a **Graph-Oriented Programming Language** designed for high-performance, predictable data-flow applications. Programs in Dana are defined as directed graphs where **nodes** represent processing units and **edges** represent data flow.
 
-## Key Features
+Dana embraces the philosophy that *data flows through your program*, making concurrency patterns explicit and eliminating hidden state mutations.
 
-- **Graph-First Architecture**: Logic is built by connecting nodes with edges (`->`).
-- **Hybrid Execution Runtime**: 
-  - **Dynamic Nodes**: Define custom logic using high-level Dana syntax (`process` blocks).
-  - **Native Nodes (FFI)**: Drop-in high-performance Rust components for system-level operations (e.g., `System.IO`).
-- **Strong Typing**: Ports and properties are strictly typed (`Int`, `String`, `Float`, etc.) to ensure graph integrity.
-- **Explicit Data Flow**: No hidden state mutations; data propagates explicitly through ports.
+---
 
-## Current Status (v0.1.0)
+## 🌟 Key Features
 
-The project is currently in **MVP (Minimum Viable Product)** stage.
+### Graph-First Architecture
+Logic is built by connecting nodes with typed edges (`->`). Data flows explicitly through ports, making program behavior predictable and easy to reason about.
 
-### Implemented Features
-- [x] **Compiler Frontend**: Fully functional PEG parser using `pest`.
-- [x] **Graph Builder**: Validates topology, port existence, and type compatibility.
-- [x] **Runtime Engine**: Synchronous event-driven scheduler.
-- [x] **Native FFI**: Interface for integrating Rust code as graph nodes (`stdlib`).
-- [x] **Standard Library**: 
-  - `System.IO.stdout`: Native interface to console output.
-- [x] **CLI Tool**: `dana` command for running and checking programs.
+### Hybrid Execution Model
+- **Dynamic Nodes**: Define custom logic using Dana's `process` blocks with familiar expression syntax.
+- **Native Nodes (FFI)**: Integrate high-performance Rust components seamlessly (e.g., `System.IO`, `System.Kernel`).
 
-### Limitations (Future Roadmap)
-- Asynchronous edges (`~>`) are parsed but currently execute synchronously.
-- `Stream<T>` type is defined but not yet distinct from standard types in behavior.
-- Advanced pattern matching and error handling are planned for v0.2.
+### Strong Static Typing
+All ports and properties are strictly typed (`Int`, `Float`, `String`, `Bool`, `Byte`, `Unit/Impulse`, `Stream<T>`, custom types) ensuring graph integrity at compile time.
 
-## 📦 Installation & Usage
+### Implicit Join Semantics
+Nodes with multiple inputs automatically synchronize—execution waits until all required inputs arrive before processing.
+
+### Pattern Matching
+Full pattern matching support with literals, wildcards, variable bindings, tuple patterns, and guards.
+
+### Control Flow
+- `match` statements for branching based on input values
+- Guard expressions on edges for conditional data routing
+- Node recursion for everything else
+
+---
+
+## Language Overview
+
+### Basic Structure
+
+A Dana program consists of **graphs**, **nodes**, and **edges**:
+
+```dana
+graph Main {
+    // Define nodes
+    node Greeter {
+        prefix: String = "Hello, "
+        
+        in name: String
+        out message: String
+        
+        process: (name) => {
+            emit message(prefix + name)
+        }
+    }
+    
+    // Connect nodes with edges
+    Greeter.message -> System.IO.stdout
+}
+```
+
+### Nodes
+
+Nodes are the processing units of Dana. Each node has:
+
+| Component | Description |
+|-----------|-------------|
+| **Properties** | Configuration values with defaults (e.g., `prefix: String = "Hello"`) |
+| **Input Ports** | Typed entry points for data (`in name: String`) |
+| **Output Ports** | Typed exit points for data (`out result: Int`) |
+| **Process Block** | Logic that transforms inputs to outputs |
+
+```dana
+node Calculator {
+    in a: Int
+    in b: Int
+    out sum: Int
+    out product: Int
+    
+    process: (a, b) => {
+        emit sum(a + b)
+        emit product(a * b)
+    }
+}
+```
+
+### Edges and Guards
+
+Edges connect output ports to input ports. Guards filter which values propagate:
+
+```dana
+// Simple edge
+NodeA.output -> NodeB.input
+
+// Guarded edge - only propagates when condition is true
+Counter.value [value > 0] -> Processor.input
+Counter.value [value <= 0] -> Terminal.done
+```
+
+### Pattern Matching
+
+Match expressions for complex branching:
+
+```dana
+node Router {
+    in command: Int
+    out small: String
+    out medium: String
+    out large: String
+    
+    process: (command) => {
+        match command {
+            1 => emit small("one")
+            2 => emit medium("two")
+            n if n > 10 => emit large("big number")
+            _ => emit small("other")
+        }
+    }
+}
+```
+
+### Type Definitions
+
+Custom types can be defined (implemented but not fully tested):
+
+```dana
+type Point {
+    x: Float
+    y: Float
+}
+
+type Result<T> {
+    value: T
+    error: String
+}
+```
+
+### Subgraphs
+
+Graphs can be nested for modularity:
+
+```dana
+graph Main {
+    graph Subsystem {
+        node Internal { ... }
+    }
+    
+    External.output -> Subsystem.Internal.input
+}
+```
+
+Also, you can instantiate nodes outside graphs, and declare edges only in graphs:
+
+```
+node MyNode {
+    in foo : Int
+    out bar : Int
+    process : (foo) => {
+        emit bar(foo * 2)
+    }
+}
+
+node Constant {
+    out val : Int = 5
+}
+
+
+graph Main {
+    Constant.val -> MyNode.foo
+    MyNode.bar -> System.IO.stdout
+}
+```
+---
+
+## Standard Library
+
+### System.IO
+Console I/O operations.
+
+| Port | Type | Description |
+|------|------|-------------|
+| `stdout` | `Any` | Prints value to console |
+
+### System.Kernel
+Runtime utility nodes for coordination and synchronization.
+
+#### System.Kernel.Collector
+Accumulates values into a list and emits them on reset.
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `in` | Input | `Any` | Values to accumulate |
+| `reset` | Input | `Any` | Trigger to emit and clear |
+| `send` | Output | `List` | Emits accumulated list |
+
+#### System.Kernel.Join
+Waits for both inputs before emitting.
+
+| Port | Direction | Type | Description |
+|------|-----------|------|-------------|
+| `a` | Input | `Any` | First value |
+| `b` | Input | `Any` | Second value |
+| `send` | Output | `List` | Emits `[a, b]` when both arrive |
+
+---
+
+## Installation & Usage
 
 ### Prerequisites
 - Rust (latest stable)
@@ -40,59 +212,88 @@ The project is currently in **MVP (Minimum Viable Product)** stage.
 cargo build --release
 ```
 
-### Development with WSL
-If you are developing on Windows but using the Rust toolchain in WSL:
-1. **VS Code Tasks**: Use the provided tasks (`Ctrl+Shift+B` for build) which run `cargo` inside WSL via `dana.ps1`.
-2. **PowerShell Script**: You can also use `.\dana.ps1 build`, `.\dana.ps1 test`, or `.\dana.ps1 run "..."`.
-3. **Performance**: The build uses a target directory inside WSL (`~/.cargo-target/dana-lang`) to avoid the slow performance of building on `/mnt/c`.
-
-### Running Examples
-
-Two example programs are provided in the `examples/` directory.
-
-**1. Hello World** (`examples/hello.dana`)
-sends a string from a user node to the system console.
+### Running Programs
 ```bash
-cargo run -- run examples/hello.dana --trigger HelloWorld.trigger
+# Run a Dana program
+./target/release/dana-lang run examples/hello.dana
+
+# Run with verbose debug output
+./target/release/dana-lang --verbose run examples/factorial_iterative.dana
+
+# Check syntax without running
+./target/release/dana-lang check examples/math.dana
 ```
 
-**2. Math Calculation** (`examples/math.dana`)
-Demonstrates arithmetic operations and variable scope.
-```bash
-cargo run -- run examples/math.dana --trigger Calculator.val --value 10
+### Development with WSL (Windows)
+Use the provided PowerShell script for cross-platform development:
+```powershell
+.\dana.ps1 build
+.\dana.ps1 test
+.\dana.ps1 run examples/hello.dana
 ```
 
-**3. String Operations** (`examples/strings.dana`)
-Demonstrates properties and string concatenation.
-```bash
-cargo run -- run examples/strings.dana --trigger Greeter.name --value Alice
-```
+---
 
-## 📄 Language Quick Start
+## Examples
 
-A Dana program consists of **Nodes** and **Edges**.
+| Example | Description |
+|---------|-------------|
+| `hello.dana` | Basic "Hello World" with System.IO |
+| `math.dana` | Arithmetic operations and expressions |
+| `strings.dana` | String concatenation and properties |
+| `while.dana` | Countdown loop demonstration |
+| `factorial_iterative.dana` | Iterative factorial using edge guards |
+| `match_basic.dana` | Pattern matching with multiple arms |
 
-```dana
-// 1. Define a Node
-node Greeter {
-    // Properties (State/Configuration)
-    prefix: String = "Hello, "
+---
 
-    // Ports (Interface)
-    in name: String
-    out message: String
+## Roadmap
 
-    // Logic (Process)
-    process: (name) => {
-        emit message(prefix + name)
-    }
-}
+### v0.3 - Runtime Stabilization
+- [ ] **EPOS Runtime Reimplementation**: The current scheduler has edge cases with race conditions in complex cyclic graphs. A redesigned *Ephemereal Pulse Orchestration System* will provide parallel execution at 0 cost (almost (probably)).
+- [ ] **Async Edge Support**: Full implementation of `~>` asynchronous edges with proper buffering semantics.
+- [ ] **Stream Processing**: Distinct behavior for `Stream<T>` types with backpressure handling.
+- [ ] **Import System**: Module imports and namespacing.
+- [ ] **Complete Type Definitions**: Full testing and implementation of custom `type` declarations.
 
-// 2. Connect the Graph
-// Connect Greeter to System Output
-Greeter.message -> System.IO.stdout
-```
+### v0.4 - Syntactic Sugar & Ergonomics [PENDING TO BE DISCUSSED]
+- [ ] **Lambda Expressions**: Anonymous inline node definitions.
+- [ ] **Destructuring**: Pattern destructuring in process signatures.
+- [ ] **Default Ports**: Implicit connections for single-port nodes.
 
-## 🤝 Contributing
 
-This is an experimental language. Contributions to the standard library or runtime engine are welcome!
+### v0.5 - Type System Enhancement [PENDING TO BE DISCUSSED]
+- [ ] **Generic Types**: Parameterized types beyond `Stream<T>`.
+- [ ] **Type Inference**: Reduce explicit annotations where possible.
+- [ ] **Union Types**: `Type1 | Type2` for flexible port typing.
+
+### Future [PENDING TO BE DISCUSSED]
+- [ ] **Visual Editor**: Graph-based IDE for visual programming.
+- [ ] **Distributed Execution**: Cross-machine graph partitioning.
+- [ ] **Persistence**: Checkpoint and resume graph state.
+
+---
+
+## Known Limitations (CAUTION)
+
+- **Type Keyword**: The `type` keyword for custom type definitions is parsed and represented in the AST, but not fully tested in runtime scenarios.
+- **Async Edges**: The `~>` syntax is parsed but currently executes synchronously.
+- **Complex Cycles**: Very deep recursive patterns may hit depth limits.
+
+---
+
+## Contributing
+
+Dana is an experimental language exploring graph-oriented paradigms. Contributions are welcome in:
+- Standard library extensions
+- Runtime optimizations
+- Documentation and examples
+- Language design discussions
+
+---
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.
+
+### Made with love from S(pain).

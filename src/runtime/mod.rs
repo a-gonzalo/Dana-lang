@@ -1,3 +1,6 @@
+//! Runtime: execution primitives and helpers (Values, Nodes, Scheduler, Native nodes, Pulse).
+//!
+//! Exposes runtime building blocks used to execute `ExecutableGraph` instances.
 pub mod value;
 pub mod node;
 pub mod scheduler;

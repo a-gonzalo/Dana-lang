@@ -1,3 +1,6 @@
+//! Scheduler: executes pulses/traces and manages trace-local ephemeral state.
+//!
+//! Responsible for scheduling pulses, loop detection, auto-triggering Unit inputs, and error tracking.
 use crate::graph::ExecutableGraph;
 use crate::runtime::value::Value;
 use crate::runtime::pulse::{Pulse, TraceId};
@@ -44,13 +47,11 @@ impl TraceStateStore {
         lock.insert((trace_id, node_idx), state);
     }
     
-    /// Check if a node has executed at least once in this trace
     pub fn has_node_executed(&self, trace_id: TraceId, node_idx: NodeIndex) -> bool {
         let lock = self.executed_nodes.read().unwrap();
         lock.contains(&(trace_id, node_idx))
     }
     
-    /// Mark a node as having executed in this trace
     pub fn mark_node_executed(&self, trace_id: TraceId, node_idx: NodeIndex) {
         let mut lock = self.executed_nodes.write().unwrap();
         lock.insert((trace_id, node_idx));
@@ -87,18 +88,15 @@ impl Scheduler {
         }
     }
 
-    /// Inject an initial event to start execution, creating a new TraceID
     pub fn inject_event(&self, node_name: &str, port: &str, value: Value) -> Result<(), String> {
         let trace_id = TraceId::new();
         self.inject_event_with_trace(node_name, port, value, trace_id)
     }
 
-    /// Inject an event into the scheduler with a specific TraceId
     pub fn inject_event_with_trace(&self, node_name: &str, port: &str, value: Value, trace_id: TraceId) -> Result<(), String> {
         let node_idx = *self.graph.node_map.get(node_name)
             .ok_or_else(|| format!("Node '{}' not found", node_name))?;
         
-        // Track this trace (create or increment pulse counter)
         self.tracker.entry(trace_id)
             .and_modify(|c| { c.fetch_add(1, std::sync::atomic::Ordering::SeqCst); })
             .or_insert(Arc::new(std::sync::atomic::AtomicUsize::new(1)));
@@ -110,13 +108,13 @@ impl Scheduler {
             node_idx,
             port.to_string(),
             value,
-            0, // Start depth
+            0,
         )).map_err(|e| format!("Failed to send initial pulse: {}", e))?;
 
         Ok(())
     }
 
-    /// Automatically trigger all Input ports of type Unit/Impulse
+    /// Automatically trigger all Input ports of type Unit/Impulse (This is done because an Impulse port triggers execution)
     pub fn auto_trigger(&mut self) -> Result<bool, String> {
         let mut triggered = false;
         let mut to_trigger = Vec::new();

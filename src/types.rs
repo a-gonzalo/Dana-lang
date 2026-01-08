@@ -9,25 +9,16 @@ use thiserror::Error;
 /// Core types in Dana
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DanaType {
-    /// Integer type
     Int,
-    /// Floating point type
     Float,
-    /// String type
     String,
-    /// Boolean type
     Bool,
-    /// Byte type
     Byte,
-    /// Stream of values of type T
     Stream(Box<DanaType>),
-    /// List of values of type T
     List(Box<DanaType>),
-    /// Unit type (for triggers/signals)
-    Unit,
-    /// Type definition: Name, Fields
+    Unit, // Also known as 'Impulse'
     Type(String, Vec<(String, DanaType)>),
-    /// Any type (universal compatibility)
+    /// Any type (universal compatibility for System.IO.stdout)
     Any,
 }
 
@@ -60,11 +51,9 @@ pub enum TypeError {
     UnknownType(String),
 }
 
-/// Type checker for validating type compatibility
 pub struct TypeChecker;
 
 impl TypeChecker {
-    /// Check if two types are compatible (can be connected via an edge)
     pub fn are_compatible(source: &DanaType, target: &DanaType) -> bool {
         match (source, target) {
             // Exact matches
@@ -86,7 +75,6 @@ impl TypeChecker {
             }
             
             // Struct compatibility (Nominal typing: names must match)
-            // We could also check fields, but for now simple name check is safer for MVP.
             // (Assuming no name collisions in same namespace)
             (DanaType::Type(n1, _), DanaType::Type(n2, _)) => n1 == n2,
             
@@ -101,7 +89,6 @@ impl TypeChecker {
         }
     }
 
-    /// Validate an edge connection
     pub fn validate_edge(
         source: &DanaType,
         target: &DanaType,

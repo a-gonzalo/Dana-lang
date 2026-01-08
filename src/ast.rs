@@ -1,39 +1,34 @@
-/// Abstract Syntax Tree (AST) definitions for Dana language
-/// 
-/// This module defines the structure of Dana programs after parsing.
+//! AST types used by parser and runtime.
+//!
+//! Compact, serde-serializable representation of parsed Dana programs: Graph, Node, Edge, Port, Types, Expressions, and Statements.
+//! Invariants: edges reference nodes/ports by name; default values are simple literal expressions.
 
 use crate::types::DanaType;
 use serde::{Deserialize, Serialize};
 
-/// Definition of a custom type (struct)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeDef {
     pub name: String,
     pub fields: Vec<(String, DanaType)>,
 }
-
-/// A complete Dana program (collection of graphs and types)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Graph { // Renaming to Program would be better, but keeping Graph for now as top container
-    pub nodes: Vec<Node>, // Global nodes (legacy v0.1 support or top-level)
-    pub edges: Vec<Edge>, // Global edges (legacy v0.1)
+pub struct Graph {
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
     pub types: Vec<TypeDef>,
-    pub subgraphs: Vec<GraphDef>, // New: Defined subgraphs (including Main)
+    pub subgraphs: Vec<GraphDef>,
 }
 
-/// A graph definition (composite node)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphDef {
     pub name: String,
     pub properties: Vec<Property>,
     pub input_ports: Vec<Port>,
     pub output_ports: Vec<Port>,
-    // Components inside the graph (declared inline)
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
 }
 
-/// A node in the graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub name: String,
@@ -43,7 +38,6 @@ pub struct Node {
     pub process: Option<ProcessBlock>,
 }
 
-/// A property (state) within a node
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Property {
     pub name: String,
@@ -51,7 +45,6 @@ pub struct Property {
     pub default_value: Option<Expression>,
 }
 
-/// An input or output port
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Port {
     pub name: String,
@@ -59,91 +52,65 @@ pub struct Port {
     pub default_value: Option<Expression>,
 }
 
-/// Process logic block
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessBlock {
-    /// Input parameters that trigger this process
     pub triggers: Vec<String>,
-    /// Statements in the process body
     pub statements: Vec<Statement>,
 }
 
-/// A pattern in a match expression
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Pattern {
-    /// Literal value: 42, "hello", true
     Literal(Expression),
-    /// Wildcard: _ (matches anything)
     Wildcard,
-    /// Variable binding: captures value into identifier
     Binding(String),
-    /// Tuple pattern: (a, b, c)
     Tuple(Vec<Pattern>),
 }
 
-/// A single arm in a match statement
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchArm {
-    /// The pattern to match against
     pub pattern: Pattern,
-    /// Optional guard condition: if expr
     pub guard: Option<Expression>,
-    /// Statements to execute if pattern matches
     pub body: Vec<Statement>,
 }
 
-/// A statement within a process block
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Statement {
-    /// Emit data to an output port: emit portName(value)
     Emit {
         port: String,
         value: Expression,
     },
-    /// Variable binding: let x = expr
     Let {
         name: String,
         value: Expression,
     },
-    /// Match statement: match expr { arms... }
     Match {
         expression: Box<Expression>,
         arms: Vec<MatchArm>,
     },
-    /// Expression statement
     Expression(Expression),
 }
 
-/// Expressions in Dana
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expression {
-    /// Integer literal
     IntLiteral(i64),
-    /// Float literal
     FloatLiteral(f64),
-    /// String literal
     StringLiteral(String),
-    /// Boolean literal
     BoolLiteral(bool),
-    /// Identifier (variable/property reference)
     Identifier(String),
-    /// Binary operation
     BinaryOp {
         op: BinaryOperator,
         left: Box<Expression>,
         right: Box<Expression>,
     },
-    /// Unary operation
     UnaryOp {
         op: UnaryOperator,
         operand: Box<Expression>,
     },
-    /// Function call
     Call {
         function: String,
         args: Vec<Expression>,
     },
-    /// Lambda expression: (x => x * 2)
     Lambda {
         params: Vec<String>,
         body: Box<Expression>,
@@ -172,7 +139,6 @@ pub enum UnaryOperator {
     Not,
 }
 
-/// An edge connecting two nodes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edge {
     pub source: PortRef,
@@ -181,7 +147,6 @@ pub struct Edge {
     pub guard: Option<Guard>,
 }
 
-/// Reference to a port on a node
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortRef {
     pub node: String,
@@ -197,7 +162,6 @@ impl PortRef {
     }
 }
 
-/// Type of edge
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeType {
     /// Synchronous edge (->)
@@ -206,13 +170,11 @@ pub enum EdgeType {
     Async,
 }
 
-/// A guard condition on an edge
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Guard {
     pub condition: Expression,
 }
 
-/// Inline lambda node for transformations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LambdaNode {
     pub params: Vec<String>,

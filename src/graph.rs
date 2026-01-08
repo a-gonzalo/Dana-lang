@@ -1,3 +1,7 @@
+//! Build and validate an executable graph from AST.
+//!
+//! Converts `Ast::Graph` into an `ExecutableGraph` (petgraph::DiGraph) with `RuntimeNode` / `RuntimeEdge`.
+//! Handles virtual nodes for subgraphs and injects system nodes (IO, Kernel).
 use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType, PortRef, Guard};
 use crate::types::{DanaType, TypeChecker, TypeError};
 use crate::runtime::node::RuntimeNode;
@@ -21,7 +25,7 @@ pub enum BuildError {
     DuplicateNode(String),
 }
 
-/// Runtime representation of an edge
+
 #[derive(Debug, Clone)]
 pub struct RuntimeEdge {
     pub source_port: String,
@@ -30,33 +34,29 @@ pub struct RuntimeEdge {
     pub guard: Option<Guard>,
 }
 
-/// The executable graph structure
+
 pub struct ExecutableGraph {
     pub graph: DiGraph<RuntimeNode, RuntimeEdge>,
     pub node_map: HashMap<String, NodeIndex>,
 }
 
 impl ExecutableGraph {
-    /// Build an executable graph from an AST
     pub fn from_ast(ast: AstGraph) -> Result<Self, BuildError> {
         let mut graph = DiGraph::new();
         let mut node_map = HashMap::new();
 
-        // 0. Pre-register Standard Library Nodes
         Self::add_system_nodes(&mut graph, &mut node_map);
 
-        // 1. Add top-level nodes
         for ast_node in ast.nodes {
             Self::add_node_to_graph(&mut graph, &mut node_map, ast_node)?;
         }
 
-        // 2. Add subgraph nodes (Hierarchical Flattening)
         for subgraph in &ast.subgraphs {
             // Create a virtual node for the graph's own ports
             // It is bi-directional: 
             // - Internal nodes can consume from graph inputs (it's an output from our perspective)
             // - Internal nodes can emit to graph outputs (it's an input from our perspective)
-            // - Internal nodes can emit to graph inputs for recursion!
+            // - Internal nodes can emit to graph inputs for recursion
             let mut internal_ports = HashMap::new();
             for port in subgraph.input_ports.iter().chain(subgraph.output_ports.iter()) {
                 internal_ports.insert(port.name.clone(), port.type_annotation.clone());
@@ -70,10 +70,10 @@ impl ExecutableGraph {
             let virtual_node = RuntimeNode::new_dana(
                 subgraph.name.clone(),
                 NodeIndex::new(0),
-                internal_ports.clone(), // Inputs
-                internal_ports,         // Outputs
+                internal_ports.clone(), 
+                internal_ports,
                 HashMap::new(),
-                None, // No process, just a port relay
+                None,
             );
             let idx = graph.add_node(virtual_node);
             graph[idx].index = idx;
@@ -87,12 +87,11 @@ impl ExecutableGraph {
             }
         }
 
-        // 3. Add top-level edges
+
         for ast_edge in ast.edges {
             Self::validate_and_add_edge(&mut graph, &node_map, &ast_edge)?;
         }
 
-        // 4. Add subgraph edges
         for subgraph in &ast.subgraphs {
             for ast_edge in &subgraph.edges {
                 let mut edge_clone = ast_edge.clone();
@@ -123,7 +122,6 @@ impl ExecutableGraph {
     }
 
     fn add_system_nodes(graph: &mut DiGraph<RuntimeNode, RuntimeEdge>, node_map: &mut HashMap<String, NodeIndex>) {
-        // System.IO
         let name = "System.IO".to_string();
         if !node_map.contains_key(&name) {
             let mut input_ports = HashMap::new();
@@ -144,7 +142,6 @@ impl ExecutableGraph {
             node_map.insert(name, idx);
         }
 
-        // System.Kernel.Collector
         let name = "System.Kernel.Collector".to_string();
         if !node_map.contains_key(&name) {
             let mut input_ports = HashMap::new();
@@ -167,7 +164,6 @@ impl ExecutableGraph {
             node_map.insert(name, idx);
         }
 
-        // System.Kernel.Join
         let name = "System.Kernel.Join".to_string();
         if !node_map.contains_key(&name) {
             let mut input_ports = HashMap::new();
@@ -205,7 +201,6 @@ impl ExecutableGraph {
             input_ports.insert(port.name.clone(), port.type_annotation.clone());
         }
 
-        // Add implicit '_start' port for nodes with 0 inputs (source nodes)
         if input_ports.is_empty() {
             input_ports.insert("_start".to_string(), DanaType::Unit);
         }
@@ -216,7 +211,6 @@ impl ExecutableGraph {
         }
 
         let mut properties = HashMap::new();
-        // 1. Existing properties
         for prop in &ast_node.properties {
             if let Some(default_expr) = &prop.default_value {
                 if let Some(val) = Value::from_literal(default_expr) {
@@ -224,7 +218,6 @@ impl ExecutableGraph {
                 }
             }
         }
-        // 2. Default values from Ports (Shorthand)
         for port in ast_node.input_ports.iter().chain(ast_node.output_ports.iter()) {
             if let Some(default_expr) = &port.default_value {
                 if let Some(val) = Value::from_literal(default_expr) {
@@ -253,17 +246,14 @@ impl ExecutableGraph {
         node_map: &HashMap<String, NodeIndex>,
         edge: &AstEdge,
     ) -> Result<(), BuildError> {
-        // Find source node
         let source_idx = *node_map
             .get(&edge.source.node)
             .ok_or_else(|| BuildError::NodeNotFound(edge.source.node.clone()))?;
 
-        // Find target node
         let target_idx = *node_map
             .get(&edge.target.node)
             .ok_or_else(|| BuildError::NodeNotFound(edge.target.node.clone()))?;
 
-        // Get source port type
         let source_node = &graph[source_idx];
         let source_type = source_node
             .output_ports
@@ -284,10 +274,8 @@ impl ExecutableGraph {
             })?
             .clone();
 
-        // Validate type compatibility
         TypeChecker::validate_edge(&source_type, &target_type)?;
 
-        // Add edge to graph
         let runtime_edge = RuntimeEdge {
             source_port: edge.source.port.clone(),
             target_port: edge.target.port.clone(),
@@ -300,7 +288,6 @@ impl ExecutableGraph {
         Ok(())
     }
 
-    /// Get a node by name
     pub fn get_node(&self, name: &str) -> Option<&RuntimeNode> {
         self.node_map.get(name).map(|idx| &self.graph[*idx])
     }
@@ -405,7 +392,6 @@ mod tests {
     #[test]
     fn test_missing_node_error() {
         let mut ast = AstGraph::new();
-        // Add edge referencing missing nodes
         ast.add_edge(AstEdge {
             source: PortRef::new("Missing", "out"),
             target: PortRef::new("AlsoMissing", "in"),
@@ -457,14 +443,14 @@ mod tests {
         let source = Node::new("Source")
             .with_output(Port {
                 name: "out".to_string(),
-                type_annotation: DanaType::String, // String output
+                type_annotation: DanaType::String,
                 default_value: None,
             });
         
         let target = Node::new("Target")
             .with_input(Port {
                 name: "in".to_string(),
-                type_annotation: DanaType::Int, // Int input
+                type_annotation: DanaType::Int,
                 default_value: None,
             });
 

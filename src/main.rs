@@ -12,16 +12,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::graph::ExecutableGraph;
 use crate::runtime::{scheduler::Scheduler, value::Value};
 
-/// Global flag for verbose output
+
 pub static VERBOSE: AtomicBool = AtomicBool::new(false);
 
-/// Check if verbose mode is enabled
 #[inline]
 pub fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
 }
 
-/// Macro for verbose output - only prints when --verbose is enabled
+
 #[macro_export]
 macro_rules! verbose {
     ($($arg:tt)*) => {
@@ -35,7 +34,7 @@ macro_rules! verbose {
 #[command(name = "dana")]
 #[command(about = "Dana Language Compiler and Runtime", long_about = None)]
 struct Cli {
-    /// Enable verbose output (debug messages)
+
     #[arg(long, global = true)]
     verbose: bool,
     
@@ -45,22 +44,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a Dana program
+
     Run {
-        /// Path to the source file
+
         path: PathBuf,
-        
-        /// Initial trigger (Node.Port)
         #[arg(short, long)]
         trigger: Option<String>,
-        
-        /// Initial value (default: Unit)
         #[arg(short, long)]
         value: Option<String>,
     },
-    /// Check syntax and types without running
     Check {
-        /// Path to the source file
         path: PathBuf,
     },
 }
@@ -68,7 +61,6 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
     
-    // Set global verbose flag
     VERBOSE.store(cli.verbose, Ordering::Relaxed);
 
     match cli.command {
@@ -108,18 +100,14 @@ fn run_program(path: PathBuf, trigger: Option<String>, val_str: Option<String>) 
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Could not read file {:?}: {}", path, e))?;
 
-    // 1. Parse
     let ast = parser::parse_file(&content)
         .map_err(|e| format!("Parse error: {}", e))?;
 
-    // 2. Build
     let graph = ExecutableGraph::from_ast(ast)
         .map_err(|e| format!("Build error: {}", e))?;
 
-    // 3. Run
     let mut scheduler = Scheduler::new(graph);
 
-    // Parse trigger "Node.Port" or "Package.Node.Port"
     if let Some(trig) = trigger {
         let parts: Vec<&str> = trig.split('.').collect();
         if parts.len() < 2 {
@@ -147,7 +135,6 @@ fn run_program(path: PathBuf, trigger: Option<String>, val_str: Option<String>) 
 
         scheduler.inject_event(&node, *port, val)?;
     } else {
-        // Automatically find and trigger all Impulse/Unit ports
         if !scheduler.auto_trigger()? {
             println!("No trigger specified and no Impulse ports found. Graph loaded but no events injected.");
             println!("Use --trigger Node.Port to start execution.");

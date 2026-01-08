@@ -27,7 +27,6 @@ pub enum ParseError {
 
 type ParseResult<T> = Result<T, ParseError>;
 
-/// Parse a Dana source file into a Graph AST
 pub fn parse_file(input: &str) -> ParseResult<Graph> {
     let pairs = DanaParser::parse(Rule::program, input)?;
     let mut graph = Graph::new();
@@ -38,7 +37,6 @@ pub fn parse_file(input: &str) -> ParseResult<Graph> {
                 for item in pair.into_inner() {
                     match item.as_rule() {
                         Rule::item => {
-                            // Unwrap the item to get the actual node_decl or edge_decl
                             let inner = item.into_inner().next().ok_or_else(|| {
                                 ParseError::InvalidSyntax("Empty item".to_string())
                             })?;
@@ -92,12 +90,10 @@ pub fn parse_file(input: &str) -> ParseResult<Graph> {
 }
 
 fn parse_node(pair: pest::iterators::Pair<Rule>) -> ParseResult<Node> {
-    // Clone the pair so we can iterate twice
     let pair_clone = pair.clone();
     
     let mut inner = pair.into_inner();
     
-    // Skip KW_NODE token and get the identifier
     let name = inner
         .find(|p| p.as_rule() == Rule::identifier)
         .ok_or_else(|| ParseError::InvalidSyntax("Missing node name".to_string()))?
@@ -106,7 +102,6 @@ fn parse_node(pair: pest::iterators::Pair<Rule>) -> ParseResult<Node> {
 
     let mut node = Node::new(name);
 
-    // First pass to get process block
     for item in inner {
         match item.as_rule() {
             Rule::property_decl => {
@@ -121,7 +116,6 @@ fn parse_node(pair: pest::iterators::Pair<Rule>) -> ParseResult<Node> {
         }
     }
 
-    // Second pass  with context awareness for ports
     let mut inner = pair_clone.into_inner();
     let _name = inner.next(); // Skip name, already parsed
     
@@ -224,7 +218,6 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<DanaType> {
             Ok(DanaType::Stream(Box::new(inner_type)))
         }
         Rule::identifier => {
-             // Struct type or other custom type ref
              Ok(DanaType::Type(inner.as_str().to_string(), Vec::new()))
         }
         _ => Err(ParseError::InvalidSyntax(format!(
@@ -261,7 +254,6 @@ fn parse_types(pair: pest::iterators::Pair<Rule>) -> ParseResult<TypeDef> {
 }
 
 fn parse_graph(pair: pest::iterators::Pair<Rule>) -> ParseResult<GraphDef> {
-    // Similar to parse_node but with components
     let pair_clone = pair.clone();
     let mut inner = pair.into_inner();
     
@@ -270,26 +262,15 @@ fn parse_graph(pair: pest::iterators::Pair<Rule>) -> ParseResult<GraphDef> {
         .ok_or_else(|| ParseError::InvalidSyntax("Missing graph name".to_string()))?
         .as_str()
         .to_string();
-
-    // First pass: Properties (and maybe ports if we follow node structure)
-    // Actually grammar says: identifier ~ "{" ~ property_decl* ~ (IN ~ port)* ~ (OUT ~ port)* ~ (item)*
-    // Re-using simplified logic: iterate all valid rules.
     
     let mut properties = Vec::new();
     let mut input_ports = Vec::new();
     let mut output_ports = Vec::new();
-    let mut nodes = Vec::new(); // Instantiations
+    let mut nodes = Vec::new(); 
     let mut edges = Vec::new();
 
     let mut parsing_inputs = false;
     let mut parsing_outputs = false;
-
-    // We need to re-iterate inner to process items in order
-    // But pests inner iterator consumes.
-    // Let's create a new inner from clone for second pass? 
-    // Or just one pass since order is strictly defined in grammar now?
-    // Grammar: (property)* ~ (in port)* ~ (out port)* ~ (node_inst | decl | edge)*
-    // Order is semi-strict.
     
     let mut inner = pair_clone.into_inner();
     inner.next(); // Skip name
@@ -330,7 +311,6 @@ fn parse_graph(pair: pest::iterators::Pair<Rule>) -> ParseResult<GraphDef> {
 fn parse_process_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<ProcessBlock> {
     let inner = pair.into_inner();
     
-    // Parse parameter list
     let mut triggers = Vec::new();
     let mut statements = Vec::new();
     
@@ -354,7 +334,6 @@ fn parse_process_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<Process
     })
 }
 
-/// Parse an emit statement directly from emit_stmt rule
 fn parse_emit_stmt_direct(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut parts = pair.into_inner();
     let port = parts
@@ -368,7 +347,6 @@ fn parse_emit_stmt_direct(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stat
     Ok(Statement::Emit { port, value })
 }
 
-/// Parse a let statement directly from let_stmt rule
 fn parse_let_stmt_direct(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut parts = pair.into_inner();
     let name = parts
@@ -407,17 +385,14 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> 
     }
 }
 
-/// Parse a match statement: match expr { arm1 arm2 ... }
 fn parse_match_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let mut inner = pair.into_inner();
     
-    // Skip KW_MATCH and find the expression
     let expr_pair = inner.find(|p| p.as_rule() == Rule::expression).ok_or_else(|| {
         ParseError::InvalidSyntax("Missing match expression".to_string())
     })?;
     let expression = Box::new(parse_expression(expr_pair)?);
     
-    // Remaining children are match arms
     let mut arms = Vec::new();
     for arm_pair in inner {
         if arm_pair.as_rule() == Rule::match_arm {
@@ -428,17 +403,14 @@ fn parse_match_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<State
     Ok(Statement::Match { expression, arms })
 }
 
-/// Parse a single match arm: pattern [if guard] => body
 fn parse_match_arm(pair: pest::iterators::Pair<Rule>) -> ParseResult<MatchArm> {
     let mut inner = pair.into_inner();
-    
-    // First is the pattern
+
     let pattern_pair = inner.next().ok_or_else(|| {
         ParseError::InvalidSyntax("Missing pattern in match arm".to_string())
     })?;
     let pattern = parse_pattern(pattern_pair)?;
-    
-    // Check for optional guard and body
+
     let mut guard = None;
     let mut body = Vec::new();
     
@@ -446,29 +418,27 @@ fn parse_match_arm(pair: pest::iterators::Pair<Rule>) -> ParseResult<MatchArm> {
         verbose!("[PARSE_ARM] Found part: {:?}", part.as_rule());
         match part.as_rule() {
             Rule::pattern_guard => {
-                // Guard contains an expression
                 let guard_expr = part.into_inner().next().ok_or_else(|| {
                     ParseError::InvalidSyntax("Empty guard".to_string())
                 })?;
                 guard = Some(parse_expression(guard_expr)?);
             }
             Rule::match_arm_body => {
-                // Body can be a single statement or a block
                 for stmt_pair in part.into_inner() {
                     verbose!("[PARSE_ARM] Body part: {:?}", stmt_pair.as_rule());
                     if stmt_pair.as_rule() == Rule::statement {
                         body.push(parse_statement(stmt_pair)?);
+
                     } else if stmt_pair.as_rule() == Rule::emit_stmt {
-                        // Direct emit statement
                         body.push(parse_emit_stmt_direct(stmt_pair)?);
+
                     } else if stmt_pair.as_rule() == Rule::let_stmt {
-                        // Direct let statement
                         body.push(parse_let_stmt_direct(stmt_pair)?);
+
                     }
                 }
             }
             Rule::statement => {
-                // Direct statement (not in a block)
                 body.push(parse_statement(part)?);
             }
             _ => {}
@@ -479,7 +449,6 @@ fn parse_match_arm(pair: pest::iterators::Pair<Rule>) -> ParseResult<MatchArm> {
     Ok(MatchArm { pattern, guard, body })
 }
 
-/// Parse a pattern
 fn parse_pattern(pair: pest::iterators::Pair<Rule>) -> ParseResult<Pattern> {
     let inner = pair.into_inner().next().ok_or_else(|| {
         ParseError::InvalidSyntax("Empty pattern".to_string())
@@ -505,7 +474,6 @@ fn parse_pattern(pair: pest::iterators::Pair<Rule>) -> ParseResult<Pattern> {
             let name = inner.as_str().to_string();
             Ok(Pattern::Binding(name))
         }
-        // If it's directly an identifier (for binding)
         Rule::identifier => {
             let name = inner.as_str().to_string();
             Ok(Pattern::Binding(name))
@@ -517,7 +485,6 @@ fn parse_pattern(pair: pest::iterators::Pair<Rule>) -> ParseResult<Pattern> {
     }
 }
 
-/// Parse a literal expression (used in patterns)
 fn parse_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expression> {
     match pair.as_rule() {
         Rule::int_literal => {
@@ -534,7 +501,6 @@ fn parse_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expression> {
         }
         Rule::string_literal => {
             let s = pair.as_str();
-            // Remove quotes
             let content = &s[1..s.len() - 1];
             Ok(Expression::StringLiteral(content.to_string()))
         }
@@ -570,7 +536,6 @@ fn parse_precedence_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expre
             
             let mut expr = parse_precedence_expr(first)?;
             
-            // Handle binary operators
             while let Some(op_pair) = inner.next() {
                 let op_str = op_pair.as_str();
                 let right = parse_precedence_expr(inner.next().ok_or_else(|| {
@@ -621,8 +586,6 @@ fn parse_precedence_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expre
         )?)),
         Rule::string_literal => {
             let s = pair.as_str();
-            // Simplify parsing by just stripping quotes. 
-            // Proper unescaping would go here.
             let content = &s[1..s.len()-1];
             Ok(Expression::StringLiteral(content.to_string()))
         }
@@ -635,7 +598,6 @@ fn parse_precedence_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expre
             let mut inner = pair.into_inner();
             let mut params = Vec::new();
             
-            // Parse parameters
             if let Some(param_list) = inner.next() {
                 if param_list.as_rule() == Rule::param_list {
                     for param in param_list.into_inner() {
@@ -644,7 +606,6 @@ fn parse_precedence_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expre
                 }
             }
             
-            // Parse body
             let body = parse_expression(inner.next().ok_or_else(|| {
                 ParseError::InvalidSyntax("Missing lambda_body".to_string())
             })?)?;
@@ -671,7 +632,6 @@ fn parse_edge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Edge> {
     let mut guard = None;
     let mut edge_type = EdgeType::Sync;
     
-    // Parse optional guard and edge operator
     for item in inner.clone() {
         match item.as_rule() {
             Rule::guard => {
@@ -691,7 +651,6 @@ fn parse_edge(pair: pest::iterators::Pair<Rule>) -> ParseResult<Edge> {
         }
     }
     
-    // Get target (last port_ref)
     let target = parse_port_ref(inner.last().ok_or_else(|| {
         ParseError::InvalidSyntax("Missing edge target".to_string())
     })?)?;
@@ -715,13 +674,12 @@ fn parse_port_ref(pair: pest::iterators::Pair<Rule>) -> ParseResult<PortRef> {
     }
 
     if parts.len() == 1 {
-        // Single identifier: it's a port on the "current" graph/node
         let port = parts.pop().unwrap();
         return Ok(PortRef::new("", port));
     }
 
-    let port = parts.pop().unwrap(); // Last one is port
-    let node = parts.join("."); // Rest is node name
+    let port = parts.pop().unwrap();
+    let node = parts.join(".");
 
     Ok(PortRef::new(node, port))
 }
@@ -818,7 +776,6 @@ mod tests {
         assert_eq!(graph.types[0].fields.len(), 2);
         assert_eq!(graph.types[0].fields[0].0, "x");
         
-        // Verify 'loc' port has Struct type
         let node = &graph.nodes[0];
         match &node.input_ports[0].type_annotation {
             DanaType::Type(name, _) => assert_eq!(name, "Point"),
@@ -852,16 +809,13 @@ mod tests {
         assert!(result.is_ok());
         let graph = result.unwrap();
         
-        // Check global node definition
         assert_eq!(graph.nodes.len(), 1);
         assert_eq!(graph.nodes[0].name, "Worker");
 
-        // Check subgraph definition
         assert_eq!(graph.subgraphs.len(), 1);
         let main = &graph.subgraphs[0];
         assert_eq!(main.name, "Main");
-        
-        // Check edges within graph
+
         assert_eq!(main.edges.len(), 1);
         assert_eq!(main.edges[0].source.node, "Worker");
         assert_eq!(main.edges[0].source.port, "res");
@@ -869,8 +823,6 @@ mod tests {
         assert_eq!(main.edges[0].target.port, "Stdout");
     }
 
-    // TODO: Okay, this isn't correct. I want to expect to chain a lot of nodes within 1 edge.
-    // Actually, I can only pass 1 source.port into another target.port. I need to check how tf Pest works like that.
     #[test]
     fn test_parse_another_node() {
         let input = r#"
@@ -899,7 +851,6 @@ mod tests {
                     emit new_data(a_string + "!!!!!!!")
                 }
             }
-            // This should be ```Source.data -> AnotherNode.a_string -> Output.new_data``` but it doesn't work yet
             Source.data -> Output.new_data
             AnotherNode.a_string -> Output.new_data
         }

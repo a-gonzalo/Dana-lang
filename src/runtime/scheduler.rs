@@ -6,7 +6,7 @@ use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use crate::types::DanaType;
 use crate::runtime::node::{RuntimeNode, NodeKind}; 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use dashmap::DashMap;
@@ -17,15 +17,19 @@ use std::sync::Mutex;
 const MAX_DEPTH: u32 = 1000;
 
 /// The state store for ephemeral trace-local data
+/// Key: (TraceId, NodeIndex) -> State of that node for that trace
 pub struct TraceStateStore {
-    // Key: (TraceId, NodeIndex) -> Properties/State of that node for that trace
     states: RwLock<HashMap<(TraceId, NodeIndex), HashMap<String, Value>>>,
+    /// Tracks which nodes have executed at least once for each trace
+    /// Used to determine if constant injection should happen
+    executed_nodes: RwLock<HashSet<(TraceId, NodeIndex)>>,
 }
 
 impl TraceStateStore {
     pub fn new() -> Self {
         Self {
             states: RwLock::new(HashMap::new()),
+            executed_nodes: RwLock::new(HashSet::new()),
         }
     }
 
@@ -39,9 +43,24 @@ impl TraceStateStore {
         lock.insert((trace_id, node_idx), state);
     }
     
+    /// Check if a node has executed at least once in this trace
+    pub fn has_node_executed(&self, trace_id: TraceId, node_idx: NodeIndex) -> bool {
+        let lock = self.executed_nodes.read().unwrap();
+        lock.contains(&(trace_id, node_idx))
+    }
+    
+    /// Mark a node as having executed in this trace
+    pub fn mark_node_executed(&self, trace_id: TraceId, node_idx: NodeIndex) {
+        let mut lock = self.executed_nodes.write().unwrap();
+        lock.insert((trace_id, node_idx));
+    }
+    
     pub fn clear_trace(&self, trace_id: TraceId) {
         let mut lock = self.states.write().unwrap();
         lock.retain(|(tid, _), _| *tid != trace_id);
+        
+        let mut exec_lock = self.executed_nodes.write().unwrap();
+        exec_lock.retain(|(tid, _)| *tid != trace_id);
     }
 }
 
@@ -125,7 +144,8 @@ impl Scheduler {
 
     /// Run the scheduler until all traces are finished
     pub fn run(&mut self) -> Result<(), String> {
-        let num_workers = thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        // Use single-threaded execution for deterministic debugging
+        let num_workers = 1; // thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let mut workers = Vec::new();
 
         for _ in 0..num_workers {
@@ -246,6 +266,13 @@ impl Scheduler {
         let trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)
             .unwrap_or_else(HashMap::new);
 
+        eprintln!("[EXEC {}] Node '{}' received on port '{}' with value {:?} (depth={})", pulse.trace_id, node.name, pulse.target_port, pulse.payload, pulse.depth);
+
+        // 1.5 CONSTANT PULL: Before executing, check if this node needs constant inputs
+        // and inject them automatically if they come from constant nodes
+        // Skip the current port since that's being delivered by this pulse
+        Self::inject_constant_inputs(pulse.target_node, pulse.trace_id, &pulse.target_port, graph, state_store);
+
         // 2. Execute the target node
         let result = match node.execute(&pulse.target_port, pulse.payload.clone(), pulse.trace_id, state_store) {
             Ok(res) => res,
@@ -261,33 +288,36 @@ impl Scheduler {
             }
         };
 
+        eprintln!("[EXEC {}] Node '{}' produced {} outputs", pulse.trace_id, node.name, result.outputs.len());
+
+        // Mark this node as having executed (for constant injection logic)
+        if !result.outputs.is_empty() {
+            state_store.mark_node_executed(pulse.trace_id, pulse.target_node);
+        }
+
+        // Build a map of all outputs for guard evaluation
+        let outputs_map: HashMap<String, Value> = result.outputs.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
         // 3. Propagate outputs to connected downstream nodes
         for (out_port, out_value) in result.outputs {
             Self::propagate_from_port(
                 pulse.target_node,
                 &out_port,
                 &out_value,
-                &trace_state,
+                &outputs_map, // Pass all outputs for guard evaluation
                 graph,
                 tx,
                 tracker,
                 pulse.trace_id,
-                pulse.depth + 1
+                pulse.depth
             );
         }
 
-        // 4. Propagate the input value itself if there are edges connected to it (lifting/forking)
-        Self::propagate_from_port(
-            pulse.target_node,
-            &pulse.target_port,
-            &pulse.payload,
-            &trace_state,
-            graph,
-            tx,
-            tracker,
-            pulse.trace_id,
-            pulse.depth + 1
-        );
+        // NOTE: We intentionally do NOT propagate the input value itself here.
+        // If a node needs to "fork" its input to multiple destinations, it should
+        // explicitly emit it as an output. This prevents duplicate propagation.
 
         Ok(())
     }
@@ -296,17 +326,23 @@ impl Scheduler {
         source_idx: NodeIndex,
         source_port: &str,
         value: &Value,
-        trace_state: &HashMap<String, Value>,
+        all_outputs: &HashMap<String, Value>, // All outputs from the node for guard evaluation
         graph: &Arc<ExecutableGraph>,
         tx: &Sender<Pulse>,
         tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
         trace_id: TraceId,
         depth: u32
     ) {
+        let source_node_name = &graph.graph[source_idx].name;
         let mut outgoing_pulses = Vec::new();
         
         for edge in graph.graph.edges_directed(source_idx, Direction::Outgoing) {
              if edge.weight().source_port == source_port {
+                 let target_idx = edge.target();
+                 let target_node = &graph.graph[target_idx];
+                 let target_node_name = &target_node.name;
+                 let target_port = &edge.weight().target_port;
+                 
                  // Guard check
                  if let Some(guard) = &edge.weight().guard {
                      let source_node = &graph.graph[source_idx];
@@ -318,19 +354,30 @@ impl Scheduler {
                      let empty_props = HashMap::new();
                      let props_ref = properties.unwrap_or(&empty_props);
 
+                     // Build scope with current value and all outputs for guard evaluation
                      let mut scope = HashMap::new();
                      scope.insert(source_port.to_string(), value.clone());
-                     for (k, v) in trace_state {
+                     for (k, v) in all_outputs {
                          scope.insert(k.clone(), v.clone());
                      }
 
                      match RuntimeNode::evaluate_expression(&guard.condition, &scope, props_ref) {
-                         Ok(Value::Bool(true)) => {},
-                         Ok(Value::Bool(false)) => continue,
-                         _ => continue,
+                         Ok(Value::Bool(true)) => {
+                             eprintln!("[PROP {}] Guard passed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                         },
+                         Ok(Value::Bool(false)) => {
+                             eprintln!("[PROP {}] Guard failed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                             continue;
+                         },
+                         _ => {
+                             eprintln!("[PROP {}] Guard error for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                             continue;
+                         }
                      }
+                 } else {
+                     eprintln!("[PROP {}] Propagating {}.{} -> {}.{} with value {:?}", trace_id, source_node_name, source_port, target_node_name, target_port, value);
                  }
-                 outgoing_pulses.push((edge.target(), edge.weight().target_port.clone()));
+                 outgoing_pulses.push((target_idx, target_port.clone()));
              }
         }
 
@@ -341,15 +388,117 @@ impl Scheduler {
             }
 
             for (target_idx, target_port) in outgoing_pulses {
+                let target_node_name = &graph.graph[target_idx].name;
+                let target_node = &graph.graph[target_idx];
+                
+                // Simple depth increment for loop detection only
+                let next_depth = depth + 1;
+                
+                eprintln!("[SEND {}] Pulse sent to {}.{} (depth={})", trace_id, target_node_name, target_port, next_depth);
                 let _ = tx.send(Pulse::new(
                     trace_id,
                     target_idx,
-                    target_port,
+                    target_port.clone(),
                     value.clone(),
-                    depth,
+                    next_depth,
                 ));
+                
+                // For virtual nodes (subgraphs), when a pulse arrives at a port that is ALSO an output,
+                // automatically propagate it downstream. This enables patterns like:
+                // internal_node.result -> subgraph.result -> downstream_node
+                // 
+                // Key insight: We check if the port is in output_ports AND we're sending TO an input port
+                // to avoid infinite recursion. The auto-propagation happens when we reach an OUTPUT port.
+                if matches!(&target_node.kind, NodeKind::DanaProcess { process, .. } if process.is_none()) {
+                    // This is a virtual node (subgraph)
+                    if target_node.output_ports.contains_key(&target_port) {
+                        eprintln!("[AUTO] Virtual node '{}' has output port '{}', auto-propagating downstream", target_node_name, target_port);
+                        
+                        Self::propagate_from_port(
+                            target_idx,
+                            &target_port,
+                            value,
+                            &HashMap::new(),
+                            graph,
+                            tx,
+                            tracker,
+                            trace_id,
+                            next_depth
+                        );
+                    }
+                }
+            }
+        } else {
+            eprintln!("[PROP {}] No outgoing pulses from {}.{}", trace_id, source_node_name, source_port);
+        }
+    }
+
+    /// Inject constant values into a node's state before execution
+    /// This handles the case where a node with multiple inputs (join) needs
+    /// values from constant nodes that have already fired once.
+    /// 
+    /// NOTE: We only inject constants on the FIRST execution of a node.
+    /// After the first execution, values should come from the dataflow, not constants.
+    fn inject_constant_inputs(
+        target_node_idx: NodeIndex,
+        trace_id: TraceId,
+        current_port: &str, // The port receiving the current pulse - don't inject this one
+        graph: &Arc<ExecutableGraph>,
+        state_store: &Arc<TraceStateStore>,
+    ) {
+        // Only inject constants on the first execution of this node
+        if state_store.has_node_executed(trace_id, target_node_idx) {
+            return;
+        }
+        
+        let target_node = &graph.graph[target_node_idx];
+        
+        // Only process nodes with a process block (nodes that do joins)
+        let process_triggers = match &target_node.kind {
+            NodeKind::DanaProcess { process: Some(p), .. } => &p.triggers,
+            _ => return,
+        };
+
+        // Get current state
+        let mut current_state = state_store.get_node_state(trace_id, target_node_idx)
+            .unwrap_or_default();
+
+        // For each required input that's missing, check if it comes from a constant
+        for required_port in process_triggers {
+            // Skip if this is the port receiving the current pulse
+            if required_port == current_port {
+                continue;
+            }
+            
+            if current_state.contains_key(required_port) {
+                continue; // Already have this input
+            }
+
+            // Look for incoming edges to this port
+            for edge in graph.graph.edges_directed(target_node_idx, Direction::Incoming) {
+                if edge.weight().target_port != *required_port {
+                    continue;
+                }
+
+                let source_idx = edge.source();
+                let source_node = &graph.graph[source_idx];
+                let source_port = &edge.weight().source_port;
+
+                // Check if source is a constant node (no process, has properties)
+                if let NodeKind::DanaProcess { process: None, properties } = &source_node.kind {
+                    // Check if the source port has a constant value
+                    if let Some(const_value) = properties.get(source_port) {
+                        eprintln!("[CONST-PULL {}] Injecting {}.{} = {:?} into {}.{}", 
+                            trace_id, source_node.name, source_port, const_value, 
+                            target_node.name, required_port);
+                        current_state.insert(required_port.clone(), const_value.clone());
+                    }
+                }
             }
         }
+
+        // Save updated state
+        state_store.set_node_state(trace_id, target_node_idx, current_state);
     }
 }
 

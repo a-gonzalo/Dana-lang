@@ -1,0 +1,15 @@
+graph Main {
+    node Constants {
+        out num : Int = 10
+    }
+    node While {
+        in foo : Int
+        out baz : Int
+        process: (foo) => {
+            emit baz(foo - 1)
+        } 
+    }
+    Constants.num -> While.foo
+    While.baz [baz >= 1] -> While.foo
+    While.baz -> System.IO.stdout
+}

@@ -85,12 +85,21 @@ impl RuntimeNode {
                 // If we have a process block, execute it
                 if let Some(process) = process {
                     // Implicit Join: Verify all required inputs are present in properties or state
+                    let mut missing_inputs = Vec::new();
                     for req_port in &process.triggers {
                         if !full_state.contains_key(req_port) && !properties.contains_key(req_port) {
                             // Missing a required input, skip execution (it's persistent now, so we'll try again next pulse)
-                            return Ok(ExecutionResult { outputs: Vec::new() });
+                            missing_inputs.push(req_port.clone());
                         }
                     }
+                    
+                    if !missing_inputs.is_empty() {
+                        eprintln!("[JOIN {}] Node '{}' waiting for inputs: {:?} (have: {:?})", 
+                            trace_id, self.name, missing_inputs, full_state.keys().collect::<Vec<_>>());
+                        return Ok(ExecutionResult { outputs: Vec::new() });
+                    }
+
+                    eprintln!("[JOIN {}] Node '{}' has all inputs, executing", trace_id, self.name);
 
                     // Create a local scope with properties + trace_state
                     let mut scope = properties.clone();

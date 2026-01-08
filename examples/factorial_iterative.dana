@@ -1,0 +1,35 @@
+// Factorial Iterativo 
+// El truco: emitimos (n-1, acc*n) y los guards evalúan sobre (n-1)
+// Cuando n-1 < 1, emitimos el resultado final
+
+graph Main {
+    node Input {
+        out n : Int = 5
+        out acc : Int = 1
+    }
+    
+    // Step espera ambos inputs (implicit join)
+    // Emite next_n = n-1 para que el guard pueda evaluarlo
+    node Step {
+        in n : Int
+        in acc : Int
+        out next_n : Int      // El valor ya decrementado
+        out next_acc : Int    // El acumulador ya multiplicado
+        
+        process: (n, acc) => {
+            emit next_n(n - 1)
+            emit next_acc(acc * n)
+        }
+    }
+    
+    // Inicio
+    Input.n -> Step.n
+    Input.acc -> Step.acc
+    
+    // Loop - el guard evalúa sobre next_n (el valor decrementado)
+    Step.next_n [next_n >= 1] -> Step.n
+    Step.next_acc -> Step.acc
+    
+    // Output - cuando next_n < 1, emitimos el resultado
+    Step.next_acc [next_n < 1] -> System.IO.stdout
+}

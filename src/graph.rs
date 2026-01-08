@@ -62,6 +62,11 @@ impl ExecutableGraph {
                 internal_ports.insert(port.name.clone(), port.type_annotation.clone());
             }
 
+            // Add implicit '_start' port for graphs with 0 inputs (source graphs)
+            if internal_ports.is_empty() {
+                internal_ports.insert("_start".to_string(), DanaType::Unit);
+            }
+
             let virtual_node = RuntimeNode::new_dana(
                 subgraph.name.clone(),
                 NodeIndex::new(0),

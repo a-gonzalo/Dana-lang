@@ -13,6 +13,10 @@ impl TraceId {
     pub fn new() -> Self {
         Self(NEXT_TRACE_ID.fetch_add(1, Ordering::SeqCst))
     }
+    
+    pub fn value(&self) -> u64 {
+        self.0
+    }
 }
 
 impl fmt::Display for TraceId {
@@ -36,7 +40,7 @@ pub struct Pulse {
     /// The input port of the target node
     pub target_port: String,
 
-    /// Execution depth (used for loop detection)
+    /// Recursion depth (only for loop detection, not for state isolation)
     pub depth: u32,
 }
 

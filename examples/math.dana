@@ -1,16 +1,16 @@
+node CONSTANTS {
+    out five : Int = 5
+}
+
 node Calculator {
     in val: Int
     out res: Int
-    out res_str: String
-    
     process: (val) => {
-        let doubled = val * 2
-        let squared = val * val
-        let result = doubled + squared
-        
-        emit res(result)
-        emit res_str("Calculation Result: " + result)
+        emit res(val * 2)
     }
 }
+graph Main {
+    CONSTANTS.five -> Calculator.val
+    Calculator.res -> System.IO.stdout
+}
 
-Calculator.res_str -> System.IO.stdout

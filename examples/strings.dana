@@ -1,3 +1,7 @@
+node NameSource {
+    out name: String = "Dana"
+}
+
 node Greeter {
     prefix: String = "Welcome, "
     
@@ -9,4 +13,5 @@ node Greeter {
     }
 }
 
+NameSource.name -> Greeter.name
 Greeter.greeting -> System.IO.stdout

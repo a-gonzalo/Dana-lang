@@ -1,10 +1,11 @@
 node HelloWorld {
-    in trigger: Unit
+    in trigger: Impulse
     out msg: String
     
     process: (trigger) => {
         emit msg("Hello, World!")
     }
 }
-
-HelloWorld.msg -> System.IO.stdout
+graph Main {
+    HelloWorld.msg -> System.IO.stdout
+}

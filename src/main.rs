@@ -36,7 +36,7 @@ macro_rules! verbose {
 #[command(about = "Dana Language Compiler and Runtime", long_about = None)]
 struct Cli {
     /// Enable verbose output (debug messages)
-    #[arg(short, long, global = true)]
+    #[arg(long, global = true)]
     verbose: bool,
     
     #[command(subcommand)]

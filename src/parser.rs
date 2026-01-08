@@ -4,6 +4,7 @@
 
 use crate::ast::*;
 use crate::types::DanaType;
+use crate::verbose;
 use pest::Parser;
 use pest_derive::Parser;
 use thiserror::Error;
@@ -442,7 +443,7 @@ fn parse_match_arm(pair: pest::iterators::Pair<Rule>) -> ParseResult<MatchArm> {
     let mut body = Vec::new();
     
     for part in inner {
-        eprintln!("[PARSE_ARM] Found part: {:?}", part.as_rule());
+        verbose!("[PARSE_ARM] Found part: {:?}", part.as_rule());
         match part.as_rule() {
             Rule::pattern_guard => {
                 // Guard contains an expression
@@ -454,7 +455,7 @@ fn parse_match_arm(pair: pest::iterators::Pair<Rule>) -> ParseResult<MatchArm> {
             Rule::match_arm_body => {
                 // Body can be a single statement or a block
                 for stmt_pair in part.into_inner() {
-                    eprintln!("[PARSE_ARM] Body part: {:?}", stmt_pair.as_rule());
+                    verbose!("[PARSE_ARM] Body part: {:?}", stmt_pair.as_rule());
                     if stmt_pair.as_rule() == Rule::statement {
                         body.push(parse_statement(stmt_pair)?);
                     } else if stmt_pair.as_rule() == Rule::emit_stmt {
@@ -474,7 +475,7 @@ fn parse_match_arm(pair: pest::iterators::Pair<Rule>) -> ParseResult<MatchArm> {
         }
     }
     
-    eprintln!("[PARSE_ARM] Body has {} statements", body.len());
+    verbose!("[PARSE_ARM] Body has {} statements", body.len());
     Ok(MatchArm { pattern, guard, body })
 }
 

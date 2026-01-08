@@ -267,12 +267,11 @@ impl Scheduler {
         let trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)
             .unwrap_or_else(HashMap::new);
 
-        eprintln!("[EXEC {}] Node '{}' received on port '{}' with value {:?} (depth={})", pulse.trace_id, node.name, pulse.target_port, pulse.payload, pulse.depth);
+        verbose!("[EXEC {}] Node '{}' received on port '{}' with value {:?} (depth={})", pulse.trace_id, node.name, pulse.target_port, pulse.payload, pulse.depth);
 
-        // 1.5 CONSTANT PULL: Before executing, check if this node needs constant inputs
-        // and inject them automatically if they come from constant nodes
-        // Skip the current port since that's being delivered by this pulse
-        Self::inject_constant_inputs(pulse.target_node, pulse.trace_id, &pulse.target_port, graph, state_store);
+        // NOTE: Constant injection disabled - it causes race conditions when constant nodes
+        // also send pulses via auto_trigger. The pulses from constant nodes are sufficient.
+        // Self::inject_constant_inputs(pulse.target_node, pulse.trace_id, &pulse.target_port, graph, state_store);
 
         // 2. Execute the target node
         let result = match node.execute(&pulse.target_port, pulse.payload.clone(), pulse.trace_id, state_store) {
@@ -289,7 +288,7 @@ impl Scheduler {
             }
         };
 
-        eprintln!("[EXEC {}] Node '{}' produced {} outputs", pulse.trace_id, node.name, result.outputs.len());
+        verbose!("[EXEC {}] Node '{}' produced {} outputs", pulse.trace_id, node.name, result.outputs.len());
 
         // Mark this node as having executed (for constant injection logic)
         if !result.outputs.is_empty() {
@@ -364,19 +363,19 @@ impl Scheduler {
 
                      match RuntimeNode::evaluate_expression(&guard.condition, &scope, props_ref) {
                          Ok(Value::Bool(true)) => {
-                             eprintln!("[PROP {}] Guard passed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                             verbose!("[PROP {}] Guard passed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
                          },
                          Ok(Value::Bool(false)) => {
-                             eprintln!("[PROP {}] Guard failed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                             verbose!("[PROP {}] Guard failed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
                              continue;
                          },
                          _ => {
-                             eprintln!("[PROP {}] Guard error for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                             verbose!("[PROP {}] Guard error for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
                              continue;
                          }
                      }
                  } else {
-                     eprintln!("[PROP {}] Propagating {}.{} -> {}.{} with value {:?}", trace_id, source_node_name, source_port, target_node_name, target_port, value);
+                     verbose!("[PROP {}] Propagating {}.{} -> {}.{} with value {:?}", trace_id, source_node_name, source_port, target_node_name, target_port, value);
                  }
                  outgoing_pulses.push((target_idx, target_port.clone()));
              }
@@ -395,7 +394,7 @@ impl Scheduler {
                 // Simple depth increment for loop detection only
                 let next_depth = depth + 1;
                 
-                eprintln!("[SEND {}] Pulse sent to {}.{} (depth={})", trace_id, target_node_name, target_port, next_depth);
+                verbose!("[SEND {}] Pulse sent to {}.{} (depth={})", trace_id, target_node_name, target_port, next_depth);
                 let _ = tx.send(Pulse::new(
                     trace_id,
                     target_idx,
@@ -413,7 +412,7 @@ impl Scheduler {
                 if matches!(&target_node.kind, NodeKind::DanaProcess { process, .. } if process.is_none()) {
                     // This is a virtual node (subgraph)
                     if target_node.output_ports.contains_key(&target_port) {
-                        eprintln!("[AUTO] Virtual node '{}' has output port '{}', auto-propagating downstream", target_node_name, target_port);
+                        verbose!("[AUTO] Virtual node '{}' has output port '{}', auto-propagating downstream", target_node_name, target_port);
                         
                         Self::propagate_from_port(
                             target_idx,
@@ -430,7 +429,7 @@ impl Scheduler {
                 }
             }
         } else {
-            eprintln!("[PROP {}] No outgoing pulses from {}.{}", trace_id, source_node_name, source_port);
+            verbose!("[PROP {}] No outgoing pulses from {}.{}", trace_id, source_node_name, source_port);
         }
     }
 
@@ -489,7 +488,7 @@ impl Scheduler {
                 if let NodeKind::DanaProcess { process: None, properties } = &source_node.kind {
                     // Check if the source port has a constant value
                     if let Some(const_value) = properties.get(source_port) {
-                        eprintln!("[CONST-PULL {}] Injecting {}.{} = {:?} into {}.{}", 
+                        verbose!("[CONST-PULL {}] Injecting {}.{} = {:?} into {}.{}", 
                             trace_id, source_node.name, source_port, const_value, 
                             target_node.name, required_port);
                         current_state.insert(required_port.clone(), const_value.clone());

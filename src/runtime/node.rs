@@ -8,6 +8,7 @@ use crate::runtime::native::{NativeNode, NativeContext};
 use crate::runtime::pulse::TraceId;
 use crate::runtime::scheduler::TraceStateStore;
 use crate::types::DanaType;
+use crate::verbose;
 use petgraph::graph::NodeIndex;
 use std::collections::HashMap;
 
@@ -94,12 +95,12 @@ impl RuntimeNode {
                     }
                     
                     if !missing_inputs.is_empty() {
-                        eprintln!("[JOIN {}] Node '{}' waiting for inputs: {:?} (have: {:?})", 
+                        verbose!("[JOIN {}] Node '{}' waiting for inputs: {:?} (have: {:?})", 
                             trace_id, self.name, missing_inputs, full_state.keys().collect::<Vec<_>>());
                         return Ok(ExecutionResult { outputs: Vec::new() });
                     }
 
-                    eprintln!("[JOIN {}] Node '{}' has all inputs, executing", trace_id, self.name);
+                    verbose!("[JOIN {}] Node '{}' has all inputs, executing", trace_id, self.name);
 
                     // Create a local scope with properties + trace_state
                     let mut scope = properties.clone();
@@ -232,15 +233,15 @@ impl RuntimeNode {
         properties: &HashMap<String, Value>,
         outputs: &mut Vec<(String, Value)>,
     ) -> Result<(), String> {
-        eprintln!("[MATCH] Matching value {:?} against {} arms", value, arms.len());
+        verbose!("[MATCH] Matching value {:?} against {} arms", value, arms.len());
         for (i, arm) in arms.iter().enumerate() {
             // Create a temporary scope for pattern bindings
             let mut arm_scope = scope.clone();
             
             // Try to match the pattern
-            eprintln!("[MATCH] Trying arm {} with pattern {:?}", i, arm.pattern);
+            verbose!("[MATCH] Trying arm {} with pattern {:?}", i, arm.pattern);
             if Self::match_pattern(&arm.pattern, value, &mut arm_scope)? {
-                eprintln!("[MATCH] Pattern matched!");
+                verbose!("[MATCH] Pattern matched!");
                 // Check guard if present
                 if let Some(guard_expr) = &arm.guard {
                     let guard_result = Self::evaluate_expression(guard_expr, &arm_scope, properties)?;
@@ -252,7 +253,7 @@ impl RuntimeNode {
                 }
                 
                 // Execute the arm's body statements
-                eprintln!("[MATCH] Executing {} statements", arm.body.len());
+                verbose!("[MATCH] Executing {} statements", arm.body.len());
                 for stmt in &arm.body {
                     Self::execute_statement(stmt, &mut arm_scope, properties, outputs)?;
                 }
@@ -262,7 +263,7 @@ impl RuntimeNode {
             }
         }
         
-        eprintln!("[MATCH] No arm matched");
+        verbose!("[MATCH] No arm matched");
         // No arm matched - this is not an error, just no emission
         Ok(())
     }
@@ -273,7 +274,7 @@ impl RuntimeNode {
         value: &Value,
         bindings: &mut HashMap<String, Value>,
     ) -> Result<bool, String> {
-        eprintln!("[MATCH_PAT] Matching pattern {:?} against value {:?}", pattern, value);
+        verbose!("[MATCH_PAT] Matching pattern {:?} against value {:?}", pattern, value);
         let result = match pattern {
             Pattern::Wildcard => Ok(true),
             
@@ -281,7 +282,7 @@ impl RuntimeNode {
                 // For literals, we need to compare the value
                 // The expression should be a literal (Int, String, Bool, etc.)
                 let pattern_value = Self::pattern_expr_to_value(expr)?;
-                eprintln!("[MATCH_PAT] Literal: comparing {:?} with {:?}", pattern_value, value);
+                verbose!("[MATCH_PAT] Literal: comparing {:?} with {:?}", pattern_value, value);
                 Ok(Self::values_equal(&pattern_value, value))
             }
             
@@ -308,7 +309,7 @@ impl RuntimeNode {
                 }
             }
         };
-        eprintln!("[MATCH_PAT] Result: {:?}", result);
+        verbose!("[MATCH_PAT] Result: {:?}", result);
         result
     }
     

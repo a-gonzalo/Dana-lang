@@ -353,40 +353,48 @@ fn parse_process_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<Process
     })
 }
 
+/// Parse an emit statement directly from emit_stmt rule
+fn parse_emit_stmt_direct(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut parts = pair.into_inner();
+    let port = parts
+        .find(|p| p.as_rule() == Rule::identifier)
+        .ok_or_else(|| ParseError::InvalidSyntax("Missing emit port".to_string()))?
+        .as_str()
+        .to_string();
+    let value = parse_expression(parts.next().ok_or_else(|| {
+        ParseError::InvalidSyntax("Missing emit value".to_string())
+    })?)?;
+    Ok(Statement::Emit { port, value })
+}
+
+/// Parse a let statement directly from let_stmt rule
+fn parse_let_stmt_direct(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut parts = pair.into_inner();
+    let name = parts
+        .find(|p| p.as_rule() == Rule::identifier)
+        .ok_or_else(|| ParseError::InvalidSyntax("Missing let binding name".to_string()))?
+        .as_str()
+        .to_string();
+    let value = parse_expression(parts.next().ok_or_else(|| {
+        ParseError::InvalidSyntax("Missing let binding value".to_string())
+    })?)?;
+    Ok(Statement::Let { name, value })
+}
+
 fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
     let inner = pair.into_inner().next().ok_or_else(|| {
         ParseError::InvalidSyntax("Empty statement".to_string())
     })?;
 
     match inner.as_rule() {
+        Rule::match_stmt => {
+            parse_match_statement(inner)
+        }
         Rule::emit_stmt => {
-            let mut parts = inner.into_inner();
-            let port = parts
-                .find(|p| p.as_rule() == Rule::identifier)
-                .ok_or_else(|| ParseError::InvalidSyntax("Missing emit port".to_string()))?
-                .as_str()
-                .to_string();
-            // After finding identifier, next rule should be expression (skipping parenthesis tokens if any, though usually punctuation isn't a rule unless named)
-            // Wait, expression is a rule. Punctuation like "(" is not a rule in my grammar (it's string literal in rule def).
-            // So next rule is expression.
-            let value = parse_expression(parts.next().ok_or_else(|| {
-                ParseError::InvalidSyntax("Missing emit value".to_string())
-            })?)?;
-
-            Ok(Statement::Emit { port, value })
+            parse_emit_stmt_direct(inner)
         }
         Rule::let_stmt => {
-            let mut parts = inner.into_inner();
-            let name = parts
-                .find(|p| p.as_rule() == Rule::identifier)
-                .ok_or_else(|| ParseError::InvalidSyntax("Missing let binding name".to_string()))?
-                .as_str()
-                .to_string();
-            let value = parse_expression(parts.next().ok_or_else(|| {
-                ParseError::InvalidSyntax("Missing let binding value".to_string())
-            })?)?;
-
-            Ok(Statement::Let { name, value })
+            parse_let_stmt_direct(inner)
         }
         Rule::expr_stmt => {
              Ok(Statement::Expression(parse_expression(inner.into_inner().next().unwrap())?))
@@ -394,6 +402,148 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> 
         _ => Err(ParseError::InvalidSyntax(format!(
             "Unknown statement rule: {:?}",
             inner.as_rule()
+        ))),
+    }
+}
+
+/// Parse a match statement: match expr { arm1 arm2 ... }
+fn parse_match_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Statement> {
+    let mut inner = pair.into_inner();
+    
+    // Skip KW_MATCH and find the expression
+    let expr_pair = inner.find(|p| p.as_rule() == Rule::expression).ok_or_else(|| {
+        ParseError::InvalidSyntax("Missing match expression".to_string())
+    })?;
+    let expression = Box::new(parse_expression(expr_pair)?);
+    
+    // Remaining children are match arms
+    let mut arms = Vec::new();
+    for arm_pair in inner {
+        if arm_pair.as_rule() == Rule::match_arm {
+            arms.push(parse_match_arm(arm_pair)?);
+        }
+    }
+    
+    Ok(Statement::Match { expression, arms })
+}
+
+/// Parse a single match arm: pattern [if guard] => body
+fn parse_match_arm(pair: pest::iterators::Pair<Rule>) -> ParseResult<MatchArm> {
+    let mut inner = pair.into_inner();
+    
+    // First is the pattern
+    let pattern_pair = inner.next().ok_or_else(|| {
+        ParseError::InvalidSyntax("Missing pattern in match arm".to_string())
+    })?;
+    let pattern = parse_pattern(pattern_pair)?;
+    
+    // Check for optional guard and body
+    let mut guard = None;
+    let mut body = Vec::new();
+    
+    for part in inner {
+        eprintln!("[PARSE_ARM] Found part: {:?}", part.as_rule());
+        match part.as_rule() {
+            Rule::pattern_guard => {
+                // Guard contains an expression
+                let guard_expr = part.into_inner().next().ok_or_else(|| {
+                    ParseError::InvalidSyntax("Empty guard".to_string())
+                })?;
+                guard = Some(parse_expression(guard_expr)?);
+            }
+            Rule::match_arm_body => {
+                // Body can be a single statement or a block
+                for stmt_pair in part.into_inner() {
+                    eprintln!("[PARSE_ARM] Body part: {:?}", stmt_pair.as_rule());
+                    if stmt_pair.as_rule() == Rule::statement {
+                        body.push(parse_statement(stmt_pair)?);
+                    } else if stmt_pair.as_rule() == Rule::emit_stmt {
+                        // Direct emit statement
+                        body.push(parse_emit_stmt_direct(stmt_pair)?);
+                    } else if stmt_pair.as_rule() == Rule::let_stmt {
+                        // Direct let statement
+                        body.push(parse_let_stmt_direct(stmt_pair)?);
+                    }
+                }
+            }
+            Rule::statement => {
+                // Direct statement (not in a block)
+                body.push(parse_statement(part)?);
+            }
+            _ => {}
+        }
+    }
+    
+    eprintln!("[PARSE_ARM] Body has {} statements", body.len());
+    Ok(MatchArm { pattern, guard, body })
+}
+
+/// Parse a pattern
+fn parse_pattern(pair: pest::iterators::Pair<Rule>) -> ParseResult<Pattern> {
+    let inner = pair.into_inner().next().ok_or_else(|| {
+        ParseError::InvalidSyntax("Empty pattern".to_string())
+    })?;
+    
+    match inner.as_rule() {
+        Rule::pattern_wildcard => Ok(Pattern::Wildcard),
+        Rule::pattern_literal => {
+            let lit_inner = inner.into_inner().next().ok_or_else(|| {
+                ParseError::InvalidSyntax("Empty pattern literal".to_string())
+            })?;
+            let expr = parse_literal(lit_inner)?;
+            Ok(Pattern::Literal(expr))
+        }
+        Rule::pattern_tuple => {
+            let patterns: Result<Vec<Pattern>, _> = inner
+                .into_inner()
+                .map(|p| parse_pattern(p))
+                .collect();
+            Ok(Pattern::Tuple(patterns?))
+        }
+        Rule::pattern_binding => {
+            let name = inner.as_str().to_string();
+            Ok(Pattern::Binding(name))
+        }
+        // If it's directly an identifier (for binding)
+        Rule::identifier => {
+            let name = inner.as_str().to_string();
+            Ok(Pattern::Binding(name))
+        }
+        _ => Err(ParseError::InvalidSyntax(format!(
+            "Unknown pattern rule: {:?}",
+            inner.as_rule()
+        ))),
+    }
+}
+
+/// Parse a literal expression (used in patterns)
+fn parse_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expression> {
+    match pair.as_rule() {
+        Rule::int_literal => {
+            let val: i64 = pair.as_str().parse().map_err(|_| {
+                ParseError::InvalidSyntax("Invalid integer literal".to_string())
+            })?;
+            Ok(Expression::IntLiteral(val))
+        }
+        Rule::float_literal => {
+            let val: f64 = pair.as_str().parse().map_err(|_| {
+                ParseError::InvalidSyntax("Invalid float literal".to_string())
+            })?;
+            Ok(Expression::FloatLiteral(val))
+        }
+        Rule::string_literal => {
+            let s = pair.as_str();
+            // Remove quotes
+            let content = &s[1..s.len() - 1];
+            Ok(Expression::StringLiteral(content.to_string()))
+        }
+        Rule::bool_literal => {
+            let val = pair.as_str() == "true";
+            Ok(Expression::BoolLiteral(val))
+        }
+        _ => Err(ParseError::InvalidSyntax(format!(
+            "Unknown literal rule: {:?}",
+            pair.as_rule()
         ))),
     }
 }

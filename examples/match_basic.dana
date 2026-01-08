@@ -1,0 +1,29 @@
+// Pattern Matching Example
+// Demonstrates the match statement with different patterns
+
+graph Main {
+    node Input {
+        out value : Int = 2
+    }
+    
+    node Router {
+        in n : Int
+        out small : String
+        out medium : String
+        out large : String
+        
+        process: (n) => {
+            match n {
+                1 => emit small("one")
+                2 => emit medium("two")
+                3 => emit medium("three")
+                _ => emit large("many")
+            }
+        }
+    }
+    
+    Input.value -> Router.n
+    Router.small -> System.IO.stdout
+    Router.medium -> System.IO.stdout
+    Router.large -> System.IO.stdout
+}

@@ -11,6 +11,8 @@ KW_OUT = @{ "out" ~ !ASCII_ALPHANUMERIC }
 KW_PROCESS = @{ "process" ~ !ASCII_ALPHANUMERIC }
 KW_EMIT = @{ "emit" ~ !ASCII_ALPHANUMERIC }
 KW_LET = @{ "let" ~ !ASCII_ALPHANUMERIC }
+KW_MATCH = @{ "match" ~ !ASCII_ALPHANUMERIC }
+KW_IF = @{ "if" ~ !ASCII_ALPHANUMERIC }
 
 KW_ON = @{ "on" ~ !ASCII_ALPHANUMERIC }
 KW_TYPE = @{ "type" ~ !ASCII_ALPHANUMERIC }
@@ -40,7 +42,7 @@ dana_type = {
 
 // Identifiers
 identifier = @{ !keyword ~ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-keyword = { KW_NODE | KW_IN | KW_OUT | KW_PROCESS | KW_EMIT | KW_LET | KW_ON | KW_TYPE | KW_GRAPH }
+keyword = { KW_NODE | KW_IN | KW_OUT | KW_PROCESS | KW_EMIT | KW_LET | KW_MATCH | KW_IF | KW_ON | KW_TYPE | KW_GRAPH }
 
 // Literals
 int_literal = @{ "-"? ~ ASCII_DIGIT+ }
@@ -92,13 +94,61 @@ logical_or_expr = { logical_and_expr ~ (logic_or_op ~ logical_and_expr)* }
 
 expression = { logical_or_expr }
 
+// ============================================================
+// Pattern Matching
+// ============================================================
+
+// Pattern literals (what can appear in a match arm)
+pattern_literal = {
+    float_literal
+    | int_literal
+    | string_literal
+    | bool_literal
+}
+
+// Wildcard pattern: _
+pattern_wildcard = { "_" }
+
+// Variable binding pattern: captures value into identifier
+pattern_binding = { identifier }
+
+// Tuple pattern: (a, b, c) or (1, _, x)
+pattern_tuple = { "(" ~ pattern ~ ("," ~ pattern)* ~ ")" }
+
+// A single pattern element
+pattern = {
+    pattern_literal
+    | pattern_wildcard
+    | pattern_tuple
+    | pattern_binding
+}
+
+// Guard clause: if condition
+pattern_guard = { KW_IF ~ expression }
+
+// Match arm: pattern [if guard] => statement(s)
+// Match arm body - can be a single emit/let or a block with multiple statements
+match_arm_body = { 
+    "{" ~ statement* ~ "}" 
+    | emit_stmt
+    | let_stmt
+}
+
+match_arm = { pattern ~ pattern_guard? ~ "=>" ~ match_arm_body }
+
+// Match statement: match expr { arm1 arm2 ... }
+match_stmt = { KW_MATCH ~ expression ~ "{" ~ match_arm* ~ "}" }
+
+// ============================================================
 // Statements
+// ============================================================
 emit_stmt = { KW_EMIT ~ identifier ~ "(" ~ expression ~ ")" }
 let_stmt = { KW_LET ~ identifier ~ "=" ~ expression }
 expr_stmt = { expression }
 
 statement = {
-    emit_stmt
+    match_stmt
+    | emit_stmt
     | let_stmt
     | expr_stmt
 }

@@ -1,6 +1,7 @@
 use crate::graph::ExecutableGraph;
 use crate::runtime::value::Value;
 use crate::runtime::pulse::{Pulse, TraceId};
+use crate::verbose;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;

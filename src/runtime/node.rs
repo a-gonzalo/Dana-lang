@@ -2,7 +2,7 @@
 ///
 /// Handles the state and execution of a single node in the graph.
 
-use crate::ast::{Expression, ProcessBlock, Statement, BinaryOperator};
+use crate::ast::{Expression, ProcessBlock, Statement, BinaryOperator, Pattern, MatchArm};
 use crate::runtime::value::Value;
 use crate::runtime::native::{NativeNode, NativeContext};
 use crate::runtime::pulse::TraceId;
@@ -109,20 +109,8 @@ impl RuntimeNode {
                     
                     // Execute statements
                     for stmt in &process.statements {
-                            match stmt {
-                                Statement::Emit { port, value } => {
-                                    let val = Self::evaluate_expression(&value, &scope, properties)?;
-                                    outputs.push((port.clone(), val));
-                                }
-                                Statement::Let { name, value } => {
-                                    let val = Self::evaluate_expression(&value, &scope, properties)?;
-                                    scope.insert(name.clone(), val);
-                                }
-                                Statement::Expression(expr) => {
-                                     Self::evaluate_expression(expr, &scope, properties)?;
-                                }
-                            }
-                        }
+                        Self::execute_statement(stmt, &mut scope, properties, &mut outputs)?;
+                    }
 
                         // CONSUME inputs to prevent double-firing (Implicit synchronization)
                         for req_port in &process.triggers {
@@ -197,7 +185,153 @@ impl RuntimeNode {
             (BinaryOperator::Equal, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l == r)),
             (BinaryOperator::NotEqual, Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l != r)),
             
+            // String comparisons
+            (BinaryOperator::Equal, Value::String(l), Value::String(r)) => Ok(Value::Bool(l == r)),
+            (BinaryOperator::NotEqual, Value::String(l), Value::String(r)) => Ok(Value::Bool(l != r)),
+            
+            // Bool comparisons
+            (BinaryOperator::Equal, Value::Bool(l), Value::Bool(r)) => Ok(Value::Bool(l == r)),
+            (BinaryOperator::NotEqual, Value::Bool(l), Value::Bool(r)) => Ok(Value::Bool(l != r)),
+            
             _ => Err("Unsupported binary operation or type mismatch".to_string()),
+        }
+    }
+    
+    /// Execute a single statement, potentially modifying scope and outputs
+    fn execute_statement(
+        stmt: &Statement,
+        scope: &mut HashMap<String, Value>,
+        properties: &HashMap<String, Value>,
+        outputs: &mut Vec<(String, Value)>,
+    ) -> Result<(), String> {
+        match stmt {
+            Statement::Emit { port, value } => {
+                let val = Self::evaluate_expression(value, scope, properties)?;
+                outputs.push((port.clone(), val));
+            }
+            Statement::Let { name, value } => {
+                let val = Self::evaluate_expression(value, scope, properties)?;
+                scope.insert(name.clone(), val);
+            }
+            Statement::Match { expression, arms } => {
+                let match_value = Self::evaluate_expression(expression, scope, properties)?;
+                Self::execute_match(&match_value, arms, scope, properties, outputs)?;
+            }
+            Statement::Expression(expr) => {
+                Self::evaluate_expression(expr, scope, properties)?;
+            }
+        }
+        Ok(())
+    }
+    
+    /// Execute a match statement by finding the first matching arm
+    fn execute_match(
+        value: &Value,
+        arms: &[MatchArm],
+        scope: &mut HashMap<String, Value>,
+        properties: &HashMap<String, Value>,
+        outputs: &mut Vec<(String, Value)>,
+    ) -> Result<(), String> {
+        eprintln!("[MATCH] Matching value {:?} against {} arms", value, arms.len());
+        for (i, arm) in arms.iter().enumerate() {
+            // Create a temporary scope for pattern bindings
+            let mut arm_scope = scope.clone();
+            
+            // Try to match the pattern
+            eprintln!("[MATCH] Trying arm {} with pattern {:?}", i, arm.pattern);
+            if Self::match_pattern(&arm.pattern, value, &mut arm_scope)? {
+                eprintln!("[MATCH] Pattern matched!");
+                // Check guard if present
+                if let Some(guard_expr) = &arm.guard {
+                    let guard_result = Self::evaluate_expression(guard_expr, &arm_scope, properties)?;
+                    match guard_result {
+                        Value::Bool(true) => {}
+                        Value::Bool(false) => continue, // Guard failed, try next arm
+                        _ => return Err("Guard must evaluate to boolean".to_string()),
+                    }
+                }
+                
+                // Execute the arm's body statements
+                eprintln!("[MATCH] Executing {} statements", arm.body.len());
+                for stmt in &arm.body {
+                    Self::execute_statement(stmt, &mut arm_scope, properties, outputs)?;
+                }
+                
+                // First matching arm wins - stop here
+                return Ok(());
+            }
+        }
+        
+        eprintln!("[MATCH] No arm matched");
+        // No arm matched - this is not an error, just no emission
+        Ok(())
+    }
+    
+    /// Try to match a pattern against a value, populating bindings if successful
+    fn match_pattern(
+        pattern: &Pattern,
+        value: &Value,
+        bindings: &mut HashMap<String, Value>,
+    ) -> Result<bool, String> {
+        eprintln!("[MATCH_PAT] Matching pattern {:?} against value {:?}", pattern, value);
+        let result = match pattern {
+            Pattern::Wildcard => Ok(true),
+            
+            Pattern::Literal(expr) => {
+                // For literals, we need to compare the value
+                // The expression should be a literal (Int, String, Bool, etc.)
+                let pattern_value = Self::pattern_expr_to_value(expr)?;
+                eprintln!("[MATCH_PAT] Literal: comparing {:?} with {:?}", pattern_value, value);
+                Ok(Self::values_equal(&pattern_value, value))
+            }
+            
+            Pattern::Binding(name) => {
+                // Binding always matches and captures the value
+                bindings.insert(name.clone(), value.clone());
+                Ok(true)
+            }
+            
+            Pattern::Tuple(patterns) => {
+                // For tuples, we need the value to be a tuple with matching length
+                if let Value::Tuple(values) = value {
+                    if patterns.len() != values.len() {
+                        return Ok(false);
+                    }
+                    for (p, v) in patterns.iter().zip(values.iter()) {
+                        if !Self::match_pattern(p, v, bindings)? {
+                            return Ok(false);
+                        }
+                    }
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
+        };
+        eprintln!("[MATCH_PAT] Result: {:?}", result);
+        result
+    }
+    
+    /// Convert a pattern expression to a Value (only literals allowed in patterns)
+    fn pattern_expr_to_value(expr: &Expression) -> Result<Value, String> {
+        match expr {
+            Expression::IntLiteral(i) => Ok(Value::Int(*i)),
+            Expression::FloatLiteral(f) => Ok(Value::Float(*f)),
+            Expression::StringLiteral(s) => Ok(Value::String(s.clone())),
+            Expression::BoolLiteral(b) => Ok(Value::Bool(*b)),
+            _ => Err("Only literal values allowed in patterns".to_string()),
+        }
+    }
+    
+    /// Check if two values are equal (for pattern matching)
+    fn values_equal(a: &Value, b: &Value) -> bool {
+        match (a, b) {
+            (Value::Int(x), Value::Int(y)) => x == y,
+            (Value::Float(x), Value::Float(y)) => (x - y).abs() < f64::EPSILON,
+            (Value::String(x), Value::String(y)) => x == y,
+            (Value::Bool(x), Value::Bool(y)) => x == y,
+            (Value::Unit, Value::Unit) => true,
+            _ => false,
         }
     }
 }

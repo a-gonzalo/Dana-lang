@@ -8,13 +8,37 @@ mod stdlib;
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::graph::ExecutableGraph;
 use crate::runtime::{scheduler::Scheduler, value::Value};
+
+/// Global flag for verbose output
+pub static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+/// Check if verbose mode is enabled
+#[inline]
+pub fn is_verbose() -> bool {
+    VERBOSE.load(Ordering::Relaxed)
+}
+
+/// Macro for verbose output - only prints when --verbose is enabled
+#[macro_export]
+macro_rules! verbose {
+    ($($arg:tt)*) => {
+        if $crate::is_verbose() {
+            eprintln!($($arg)*);
+        }
+    };
+}
 
 #[derive(Parser)]
 #[command(name = "dana")]
 #[command(about = "Dana Language Compiler and Runtime", long_about = None)]
 struct Cli {
+    /// Enable verbose output (debug messages)
+    #[arg(short, long, global = true)]
+    verbose: bool,
+    
     #[command(subcommand)]
     command: Commands,
 }
@@ -43,6 +67,9 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
+    
+    // Set global verbose flag
+    VERBOSE.store(cli.verbose, Ordering::Relaxed);
 
     match cli.command {
         Commands::Run { path, trigger, value } => {

@@ -15,6 +15,7 @@ pub enum Value {
     Bool(bool),
     Byte(u8),
     List(Vec<Value>),
+    Tuple(Vec<Value>),
     // Streams are handled by the runtime channel mechanism, but we might need a representation here
     Unit,
 }
@@ -34,6 +35,14 @@ impl fmt::Display for Value {
                     write!(f, "{}", item)?;
                 }
                 write!(f, "]")
+            }
+            Value::Tuple(v) => {
+                write!(f, "(")?;
+                for (i, item) in v.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", item)?;
+                }
+                write!(f, ")")
             }
             Value::Unit => write!(f, "()"),
         }
@@ -57,6 +66,7 @@ impl Value {
                 };
                 DanaType::List(Box::new(inner_type))
             }
+            Value::Tuple(_) => DanaType::Any, // Tuples are heterogeneous, use Any for now
             Value::Unit => DanaType::Unit,
         }
     }

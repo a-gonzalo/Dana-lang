@@ -68,6 +68,30 @@ pub struct ProcessBlock {
     pub statements: Vec<Statement>,
 }
 
+/// A pattern in a match expression
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Pattern {
+    /// Literal value: 42, "hello", true
+    Literal(Expression),
+    /// Wildcard: _ (matches anything)
+    Wildcard,
+    /// Variable binding: captures value into identifier
+    Binding(String),
+    /// Tuple pattern: (a, b, c)
+    Tuple(Vec<Pattern>),
+}
+
+/// A single arm in a match statement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MatchArm {
+    /// The pattern to match against
+    pub pattern: Pattern,
+    /// Optional guard condition: if expr
+    pub guard: Option<Expression>,
+    /// Statements to execute if pattern matches
+    pub body: Vec<Statement>,
+}
+
 /// A statement within a process block
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Statement {
@@ -80,6 +104,11 @@ pub enum Statement {
     Let {
         name: String,
         value: Expression,
+    },
+    /// Match statement: match expr { arms... }
+    Match {
+        expression: Box<Expression>,
+        arms: Vec<MatchArm>,
     },
     /// Expression statement
     Expression(Expression),

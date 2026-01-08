@@ -14,6 +14,7 @@ impl TraceId {
         Self(NEXT_TRACE_ID.fetch_add(1, Ordering::SeqCst))
     }
     
+    #[allow(dead_code)]
     pub fn value(&self) -> u64 {
         self.0
     }

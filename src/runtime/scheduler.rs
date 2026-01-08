@@ -5,7 +5,7 @@ use crate::graph::ExecutableGraph;
 use crate::runtime::value::Value;
 use crate::runtime::pulse::{Pulse, TraceId};
 use crate::verbose;
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::graph::NodeIndex;
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use crate::types::DanaType;
@@ -503,6 +503,7 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use petgraph::graph::DiGraph;
     use crate::ast::{Graph, Node, Port, ProcessBlock, Statement, Expression};
     use crate::types::DanaType;
 

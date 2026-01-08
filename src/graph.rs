@@ -2,7 +2,7 @@
 //!
 //! Converts `Ast::Graph` into an `ExecutableGraph` (petgraph::DiGraph) with `RuntimeNode` / `RuntimeEdge`.
 //! Handles virtual nodes for subgraphs and injects system nodes (IO, Kernel).
-use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType, PortRef, Guard};
+use crate::ast::{Graph as AstGraph, Edge as AstEdge, EdgeType, Guard};
 use crate::types::{DanaType, TypeChecker, TypeError};
 use crate::runtime::node::RuntimeNode;
 use crate::runtime::value::Value;
@@ -287,7 +287,7 @@ impl ExecutableGraph {
 
         Ok(())
     }
-
+    #[warn(dead_code)]
     pub fn get_node(&self, name: &str) -> Option<&RuntimeNode> {
         self.node_map.get(name).map(|idx| &self.graph[*idx])
     }
@@ -296,7 +296,7 @@ impl ExecutableGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Node, Port};
+    use crate::ast::{Node, Port, PortRef};
 
     #[test]
     fn test_build_simple_graph() {

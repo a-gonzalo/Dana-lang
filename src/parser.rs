@@ -13,6 +13,7 @@ use thiserror::Error;
 #[grammar = "grammar.pest"]
 pub struct DanaParser;
 
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error("Pest parsing error: {0}")]

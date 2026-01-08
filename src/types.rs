@@ -39,6 +39,7 @@ impl fmt::Display for DanaType {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum TypeError {
     #[error("Type mismatch: expected {0}, got {1}")]

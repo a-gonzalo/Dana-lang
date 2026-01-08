@@ -181,6 +181,7 @@ pub struct LambdaNode {
     pub body: Expression,
 }
 
+#[allow(dead_code)]
 impl Graph {
     pub fn new() -> Self {
         Self {
@@ -208,6 +209,7 @@ impl Graph {
     }
 }
 
+#[allow(dead_code)]
 impl Node {
     pub fn new(name: impl Into<String>) -> Self {
         Self {

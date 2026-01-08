@@ -51,6 +51,7 @@ impl fmt::Display for Value {
 
 impl Value {
     /// Get the DanaType of this value
+    #[allow(dead_code)]
     pub fn get_type(&self) -> DanaType {
         match self {
             Value::Int(_) => DanaType::Int,
@@ -72,6 +73,7 @@ impl Value {
     }
 
     /// Try to convert a value to match a target type (e.g. Int -> Float)
+    #[allow(dead_code)]
     pub fn convert_to(&self, target_type: &DanaType) -> Result<Value, TypeError> {
         if &self.get_type() == target_type {
             return Ok(self.clone());

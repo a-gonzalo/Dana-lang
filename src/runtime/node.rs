@@ -73,7 +73,7 @@ impl RuntimeNode {
     }
 
     /// Execute the node logic triggered by a specific input
-    pub fn execute(&self, trigger_port: &str, input_value: Value, trace_id: TraceId, state_store: &TraceStateStore) -> Result<ExecutionResult, String> {
+    pub fn execute(&self, trigger_port: &str, input_value: Value, trace_id: TraceId, state_store: &TraceStateStore) -> Result<ExecutionResult, crate::runtime::error::RuntimeError> {
         // ALWAYS SAVE the incoming value to the trace state
         let mut full_state = state_store.get_node_state(trace_id, self.index).unwrap_or_default();
         full_state.insert(trigger_port.to_string(), input_value.clone());
@@ -110,9 +110,8 @@ impl RuntimeNode {
                     
                     // Execute statements
                     for stmt in &process.statements {
-                        match Self::execute_statement(stmt, &mut scope, properties, &mut outputs) {
-                            Ok(_) => {},
-                            Err(e) => return Err(e.to_string()),
+                        if let Err(e) = Self::execute_statement(stmt, &mut scope, properties, &mut outputs) {
+                            return Err(crate::runtime::error::RuntimeError::Eval(e));
                         }
                     }
 
@@ -145,11 +144,7 @@ impl RuntimeNode {
                 };
                 match native_node.on_input(trigger_port, input_value, &ctx) {
                     Ok(outputs) => Ok(ExecutionResult { outputs }),
-                    Err(err) => match err {
-                        crate::runtime::error::RuntimeError::Native(s) => Err(s),
-                        crate::runtime::error::RuntimeError::Other(s) => Err(s),
-                        other => Err(other.to_string()),
-                    }
+                    Err(err) => Err(err),
                 }
             }
         }

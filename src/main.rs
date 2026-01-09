@@ -133,15 +133,15 @@ fn run_program(path: PathBuf, trigger: Option<String>, val_str: Option<String>) 
             Value::Unit
         };
 
-        scheduler.inject_event(&node, *port, val)?;
+        scheduler.inject_event(&node, *port, val).map_err(|e| e.to_string())?;
     } else {
-        if !scheduler.auto_trigger()? {
+        if !scheduler.auto_trigger().map_err(|e| e.to_string())? {
             println!("No trigger specified and no Impulse ports found. Graph loaded but no events injected.");
             println!("Use --trigger Node.Port to start execution.");
         }
     }
 
-    scheduler.run()?;
+    scheduler.run().map_err(|e| e.to_string())?;
     
     println!("Execution finished correctly");
     Ok(())

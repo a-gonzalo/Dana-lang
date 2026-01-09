@@ -20,10 +20,10 @@ pub fn execute_and_propagate(
     tx: &Sender<Pulse>,
     tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
     trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>
-) -> Result<(), String> {
+) -> Result<(), crate::runtime::error::RuntimeError> {
     // 1. Get current node state from TraceStateStore
     let node = &graph.graph[pulse.target_node];
-    let trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)
+    let _trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)
         .unwrap_or_else(HashMap::new);
 
     verbose!("[EXEC {}] Node '{}' received on port '{}' with value {:?} (depth={})", pulse.trace_id, node.name, pulse.target_port, pulse.payload, pulse.depth);
@@ -36,11 +36,11 @@ pub fn execute_and_propagate(
     let result = match node.execute(&pulse.target_port, pulse.payload.clone(), pulse.trace_id, state_store) {
         Ok(res) => res,
         Err(e) => {
-            // Record error in tracker (wrap as RuntimeError::Other)
+            // Record error in tracker using the RuntimeError directly
             if let Some(err_mutex) = trace_errors.get(&pulse.trace_id) {
                 let mut lock = err_mutex.lock().unwrap();
                 if lock.is_none() {
-                    *lock = Some(crate::runtime::error::RuntimeError::Other(e.clone()));
+                    *lock = Some(e.clone());
                 }
             }
             return Err(e);
@@ -110,7 +110,7 @@ mod tests {
         ast.add_node(target);
         ast.add_edge(crate::ast::Edge { source: crate::ast::PortRef::new("Source", "out"), target: crate::ast::PortRef::new("Target", "in"), edge_type: crate::ast::EdgeType::Sync, guard: None });
 
-        let mut graph = ExecutableGraph::from_ast(ast).unwrap();
+        let graph = ExecutableGraph::from_ast(ast).unwrap();
 
         let (tx, rx) = unbounded();
         let tracker = Arc::new(DashMap::new());

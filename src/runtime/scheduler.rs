@@ -9,9 +9,9 @@ use petgraph::graph::NodeIndex;
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
 use crate::types::DanaType;
-use crate::runtime::node::{RuntimeNode, NodeKind}; 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use crate::runtime::node::NodeKind; 
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use dashmap::DashMap;
 use crossbeam_channel::{Sender, Receiver, unbounded};
@@ -50,14 +50,14 @@ impl Scheduler {
         }
     }
 
-    pub fn inject_event(&self, node_name: &str, port: &str, value: Value) -> Result<(), String> {
+    pub fn inject_event(&self, node_name: &str, port: &str, value: Value) -> Result<(), crate::runtime::error::RuntimeError> {
         let trace_id = TraceId::new();
         self.inject_event_with_trace(node_name, port, value, trace_id)
     }
 
-    pub fn inject_event_with_trace(&self, node_name: &str, port: &str, value: Value, trace_id: TraceId) -> Result<(), String> {
+    pub fn inject_event_with_trace(&self, node_name: &str, port: &str, value: Value, trace_id: TraceId) -> Result<(), crate::runtime::error::RuntimeError> {
         let node_idx = *self.graph.node_map.get(node_name)
-            .ok_or_else(|| format!("Node '{}' not found", node_name))?;
+            .ok_or_else(|| crate::runtime::error::RuntimeError::Scheduler(format!("Node '{}' not found", node_name)))?;
         
         self.tracker.entry(trace_id)
             .and_modify(|c| { c.fetch_add(1, std::sync::atomic::Ordering::SeqCst); })
@@ -72,13 +72,13 @@ impl Scheduler {
             port.to_string(),
             value,
             0,
-        )).map_err(|e| format!("Failed to send initial pulse: {}", e))?;
+        )).map_err(|e| crate::runtime::error::RuntimeError::Other(format!("Failed to send initial pulse: {}", e)))?;
 
         Ok(())
     }
 
     /// Automatically trigger all Input ports of type Unit/Impulse (This is done because an Impulse port triggers execution)
-    pub fn auto_trigger(&mut self) -> Result<bool, String> {
+    pub fn auto_trigger(&mut self) -> Result<bool, crate::runtime::error::RuntimeError> {
         let mut triggered = false;
         let mut to_trigger = Vec::new();
 
@@ -105,7 +105,7 @@ impl Scheduler {
     }
 
     /// Run the scheduler until all traces are finished
-    pub fn run(&mut self) -> Result<(), String> {
+    pub fn run(&mut self) -> Result<(), crate::runtime::error::RuntimeError> {
         // Use single-threaded execution for deterministic debugging
         let num_workers = 1; // thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let mut workers = Vec::new();
@@ -191,11 +191,7 @@ impl Scheduler {
         }
 
         if let Some(err) = final_error {
-            // Preserve original `Other` messages to avoid changing existing test expectations
-            match err {
-                crate::runtime::error::RuntimeError::Other(s) => return Err(s),
-                other => return Err(other.to_string()),
-            }
+            return Err(err);
         }
 
         Ok(())
@@ -208,7 +204,7 @@ impl Scheduler {
         tx: &Sender<Pulse>,
         tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
         trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::runtime::error::RuntimeError> {
         let result = Self::execute_and_propagate(pulse.clone(), graph, state_store, tx, tracker, trace_errors);
         
         // ALWAYS DECREMENT when this pulse is done
@@ -226,7 +222,7 @@ impl Scheduler {
         tx: &Sender<Pulse>,
         tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
         trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::runtime::error::RuntimeError> {
         executor::execute_and_propagate(pulse, graph, state_store, tx, tracker, trace_errors)
     }
 
@@ -319,6 +315,7 @@ mod tests {
     use petgraph::graph::DiGraph;
     use crate::ast::{Graph, Node, Port, ProcessBlock, Statement, Expression};
     use crate::types::DanaType;
+    use crate::runtime::node::RuntimeNode;
 
     #[test]
     fn test_simple_pipeline() {
@@ -512,7 +509,8 @@ mod tests {
         let res = scheduler.run();
         
         assert!(res.is_err(), "Guard should Pass 15. Result Err means Failer WAS reached.");
-        assert_eq!(res.err().unwrap(), "FailNode executed");
+        let err = res.err().unwrap();
+        assert_eq!(err.to_string(), "FailNode executed");
     }
 
     #[test]
@@ -551,7 +549,8 @@ mod tests {
         let res = scheduler.run();
         
         assert!(res.is_err(), "Infinite loop should be detected and return Err");
-        assert!(res.err().unwrap().contains("Max execution depth reached"));
+        let err = res.err().unwrap();
+        assert!(err.to_string().contains("Max execution depth reached"));
     }
 
     #[test]

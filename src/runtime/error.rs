@@ -10,7 +10,7 @@ pub enum RuntimeError {
     #[error("Scheduler error: {0}")]
     Scheduler(String),
 
-    #[error("Native error: {0}")]
+    #[error("{0}")]
     Native(String),
 
     #[error("Build error: {0}")]

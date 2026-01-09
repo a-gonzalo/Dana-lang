@@ -17,6 +17,7 @@ use dashmap::DashMap;
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use std::thread;
 use std::sync::Mutex;
+use crate::runtime::error::RuntimeError;
 
 const MAX_DEPTH: u32 = 1000;
 
@@ -33,7 +34,7 @@ pub struct Scheduler {
     pulse_tx: Sender<Pulse>,
     pulse_rx: Receiver<Pulse>,
     tracker: Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
-    trace_errors: Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>,
+    trace_errors: Arc<DashMap<TraceId, Arc<Mutex<Option<RuntimeError>>>>>,
 
 }
 
@@ -50,14 +51,14 @@ impl Scheduler {
         }
     }
 
-    pub fn inject_event(&self, node_name: &str, port: &str, value: Value) -> Result<(), crate::runtime::error::RuntimeError> {
+    pub fn inject_event(&self, node_name: &str, port: &str, value: Value) -> Result<(), RuntimeError> {
         let trace_id = TraceId::new();
         self.inject_event_with_trace(node_name, port, value, trace_id)
     }
 
-    pub fn inject_event_with_trace(&self, node_name: &str, port: &str, value: Value, trace_id: TraceId) -> Result<(), crate::runtime::error::RuntimeError> {
+    pub fn inject_event_with_trace(&self, node_name: &str, port: &str, value: Value, trace_id: TraceId) -> Result<(), RuntimeError> {
         let node_idx = *self.graph.node_map.get(node_name)
-            .ok_or_else(|| crate::runtime::error::RuntimeError::Scheduler(format!("Node '{}' not found", node_name)))?;
+            .ok_or_else(|| RuntimeError::Scheduler(format!("Node '{}' not found", node_name)))?;
         
         self.tracker.entry(trace_id)
             .and_modify(|c| { c.fetch_add(1, std::sync::atomic::Ordering::SeqCst); })
@@ -72,13 +73,13 @@ impl Scheduler {
             port.to_string(),
             value,
             0,
-        )).map_err(|e| crate::runtime::error::RuntimeError::Other(format!("Failed to send initial pulse: {}", e)))?;
+        )).map_err(|e| RuntimeError::Other(format!("Failed to send initial pulse: {}", e)))?;
 
         Ok(())
     }
 
     /// Automatically trigger all Input ports of type Unit/Impulse (This is done because an Impulse port triggers execution)
-    pub fn auto_trigger(&mut self) -> Result<bool, crate::runtime::error::RuntimeError> {
+    pub fn auto_trigger(&mut self) -> Result<bool, RuntimeError> {
         let mut triggered = false;
         let mut to_trigger = Vec::new();
 
@@ -105,7 +106,7 @@ impl Scheduler {
     }
 
     /// Run the scheduler until all traces are finished
-    pub fn run(&mut self) -> Result<(), crate::runtime::error::RuntimeError> {
+    pub fn run(&mut self) -> Result<(), RuntimeError> {
         // Use single-threaded execution for deterministic debugging
         let num_workers = 1; // thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let mut workers = Vec::new();
@@ -137,7 +138,7 @@ impl Scheduler {
                         if let Some(err_mutex) = trace_errors.get(&pulse.trace_id) {
                             let mut lock = err_mutex.lock().unwrap();
                             if lock.is_none() {
-                                *lock = Some(crate::runtime::error::RuntimeError::Scheduler(err_msg));
+                                *lock = Some(RuntimeError::Scheduler(err_msg));
                             }
                         }
                         
@@ -156,7 +157,7 @@ impl Scheduler {
         }
 
         // Wait until all trackers are zero
-        let mut final_error: Option<crate::runtime::error::RuntimeError> = None;
+        let mut final_error: Option<RuntimeError> = None;
         loop {
             if self.tracker.is_empty() {
                 break;
@@ -203,8 +204,8 @@ impl Scheduler {
         state_store: &Arc<TraceStateStore>,
         tx: &Sender<Pulse>,
         tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
-        trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>
-    ) -> Result<(), crate::runtime::error::RuntimeError> {
+        trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<RuntimeError>>>>>
+    ) -> Result<(), RuntimeError> {
         let result = Self::execute_and_propagate(pulse.clone(), graph, state_store, tx, tracker, trace_errors);
         
         // ALWAYS DECREMENT when this pulse is done
@@ -221,8 +222,8 @@ impl Scheduler {
         state_store: &Arc<TraceStateStore>,
         tx: &Sender<Pulse>,
         tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
-        trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>
-    ) -> Result<(), crate::runtime::error::RuntimeError> {
+        trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<RuntimeError>>>>>
+    ) -> Result<(), RuntimeError> {
         executor::execute_and_propagate(pulse, graph, state_store, tx, tracker, trace_errors)
     }
 
@@ -422,8 +423,8 @@ mod tests {
         #[derive(Debug)]
         struct FailNode;
         impl crate::runtime::native::NativeNode for FailNode {
-            fn on_input(&self, _port: &str, _value: Value, _ctx: &crate::runtime::native::NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError> {
-                Err(crate::runtime::error::RuntimeError::Native("FailNode executed".to_string()))
+            fn on_input(&self, _port: &str, _value: Value, _ctx: &crate::runtime::native::NativeContext) -> Result<Vec<(String, Value)>, RuntimeError> {
+                Err(RuntimeError::Native("FailNode executed".to_string()))
             }
         }
         
@@ -490,8 +491,8 @@ mod tests {
         #[derive(Debug)]
         struct FailNode;
         impl crate::runtime::native::NativeNode for FailNode {
-            fn on_input(&self, _port: &str, _value: Value, _ctx: &crate::runtime::native::NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError> {
-                Err(crate::runtime::error::RuntimeError::Native("FailNode executed".to_string()))
+            fn on_input(&self, _port: &str, _value: Value, _ctx: &crate::runtime::native::NativeContext) -> Result<Vec<(String, Value)>, RuntimeError> {
+                Err(RuntimeError::Native("FailNode executed".to_string()))
             }
         }
         
@@ -643,7 +644,7 @@ mod tests {
             target: Arc<Mutex<Vec<Value>>>,
         }
         impl NativeNode for CaptureNode {
-            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError> {
+            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, RuntimeError> {
                 let mut lock = self.target.lock().unwrap();
                 lock.push(value);
                 Ok(Vec::new())
@@ -712,7 +713,7 @@ mod tests {
         #[derive(Debug)]
         struct CaptureNode { target: Arc<Mutex<Vec<Value>>> }
         impl NativeNode for CaptureNode {
-            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError> {
+            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, RuntimeError> {
                 self.target.lock().unwrap().push(value);
                 Ok(Vec::new())
             }
@@ -781,7 +782,7 @@ mod tests {
         #[derive(Debug)]
         struct CaptureNode { target: Arc<Mutex<Vec<Value>>> }
         impl NativeNode for CaptureNode {
-            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError> {
+            fn on_input(&self, _port: &str, value: Value, _ctx: &NativeContext) -> Result<Vec<(String, Value)>, RuntimeError> {
                 self.target.lock().unwrap().push(value);
                 Ok(Vec::new())
             }

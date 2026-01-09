@@ -1,6 +1,7 @@
 use crate::runtime::native::{NativeNode, NativeContext};
 use crate::runtime::value::Value;
 use std::collections::HashMap;
+use crate::runtime::error::RuntimeError;
 
 /// System.Kernel.Collector
 /// Accumulates pulses in a list and emits them on reset
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 pub struct CollectorNode;
 
 impl NativeNode for CollectorNode {
-    fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError> {
+    fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, RuntimeError> {
         let mut state = ctx.state_store.get_node_state(ctx.trace_id, ctx.node_idx).unwrap_or_else(HashMap::new);
         
         match port {
@@ -29,7 +30,7 @@ impl NativeNode for CollectorNode {
                 ctx.state_store.set_node_state(ctx.trace_id, ctx.node_idx, state);
                 Ok(vec![("send".to_string(), list_val)])
             }
-            _ => Err(crate::runtime::error::RuntimeError::Native(format!("Unknown input port {} for Collector", port))),
+            _ => Err(RuntimeError::Native(format!("Unknown input port {} for Collector", port))),
         }
     }
 }
@@ -57,7 +58,7 @@ impl NativeNode for JoinNode {
                     Ok(Vec::new())
                 }
             }
-            _ => Err(crate::runtime::error::RuntimeError::Native(format!("Unknown input port {} for Join", port))),
+            _ => Err(RuntimeError::Native(format!("Unknown input port {} for Join", port))),
         }
     }
 }

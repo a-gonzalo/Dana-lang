@@ -11,7 +11,7 @@ use crate::types::DanaType;
 use crate::verbose;
 use petgraph::graph::NodeIndex;
 use std::collections::HashMap;
-
+use crate::runtime::error::RuntimeError;   
 /// Result of a node execution
 #[derive(Debug, Clone)]
 pub struct ExecutionResult {
@@ -73,7 +73,7 @@ impl RuntimeNode {
     }
 
     /// Execute the node logic triggered by a specific input
-    pub fn execute(&self, trigger_port: &str, input_value: Value, trace_id: TraceId, state_store: &TraceStateStore) -> Result<ExecutionResult, crate::runtime::error::RuntimeError> {
+    pub fn execute(&self, trigger_port: &str, input_value: Value, trace_id: TraceId, state_store: &TraceStateStore) -> Result<ExecutionResult, RuntimeError> {
         // ALWAYS SAVE the incoming value to the trace state
         let mut full_state = state_store.get_node_state(trace_id, self.index).unwrap_or_default();
         full_state.insert(trigger_port.to_string(), input_value.clone());
@@ -111,7 +111,7 @@ impl RuntimeNode {
                     // Execute statements
                     for stmt in &process.statements {
                         if let Err(e) = Self::execute_statement(stmt, &mut scope, properties, &mut outputs) {
-                            return Err(crate::runtime::error::RuntimeError::Eval(e));
+                            return Err(RuntimeError::Eval(e));
                         }
                     }
 

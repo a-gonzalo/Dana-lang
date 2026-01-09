@@ -10,6 +10,7 @@ use crossbeam_channel::Sender;
 use dashmap::DashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Mutex;
+use crate::runtime::error::RuntimeError;
 
 use crate::runtime::scheduler::propagator;
 
@@ -19,8 +20,8 @@ pub fn execute_and_propagate(
     state_store: &Arc<TraceStateStore>,
     tx: &Sender<Pulse>,
     tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
-    trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>
-) -> Result<(), crate::runtime::error::RuntimeError> {
+    trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<RuntimeError>>>>>
+) -> Result<(), RuntimeError> {
     // 1. Get current node state from TraceStateStore
     let node = &graph.graph[pulse.target_node];
     let _trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)

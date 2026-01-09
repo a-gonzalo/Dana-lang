@@ -3,6 +3,7 @@ use crate::runtime::pulse::TraceId;
 use crate::runtime::scheduler::TraceStateStore;
 use petgraph::graph::NodeIndex;
 use std::fmt::Debug;
+use crate::runtime::error::RuntimeError;   
 
 /// Context passed to native nodes during execution
 pub struct NativeContext<'a> {
@@ -15,5 +16,5 @@ pub struct NativeContext<'a> {
 pub trait NativeNode: Debug + Send + Sync {
     /// Execute the node logic given an input on a specific port
     /// Returns a list of (output_port, value) tuples to emit
-    fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError>;
+    fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, RuntimeError>;
 }

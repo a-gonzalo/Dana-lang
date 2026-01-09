@@ -143,8 +143,14 @@ impl RuntimeNode {
                     node_idx: self.index,
                     state_store,
                 };
-                let outputs = native_node.on_input(trigger_port, input_value, &ctx)?;
-                Ok(ExecutionResult { outputs })
+                match native_node.on_input(trigger_port, input_value, &ctx) {
+                    Ok(outputs) => Ok(ExecutionResult { outputs }),
+                    Err(err) => match err {
+                        crate::runtime::error::RuntimeError::Native(s) => Err(s),
+                        crate::runtime::error::RuntimeError::Other(s) => Err(s),
+                        other => Err(other.to_string()),
+                    }
+                }
             }
         }
     }

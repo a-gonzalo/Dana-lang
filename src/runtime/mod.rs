@@ -4,6 +4,7 @@
 pub mod value;
 pub mod node;
 pub mod evaluator;
+pub mod error;
 pub mod scheduler;
 pub mod native;
 pub mod pulse;

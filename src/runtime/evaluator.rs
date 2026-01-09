@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 /// Strongly-typed evaluator errors
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum EvalError {
     #[error("Variable not found: {0}")]
     VariableNotFound(String),

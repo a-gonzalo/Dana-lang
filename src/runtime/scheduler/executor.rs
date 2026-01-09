@@ -19,7 +19,7 @@ pub fn execute_and_propagate(
     state_store: &Arc<TraceStateStore>,
     tx: &Sender<Pulse>,
     tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
-    trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<String>>>>>
+    trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<crate::runtime::error::RuntimeError>>>>>
 ) -> Result<(), String> {
     // 1. Get current node state from TraceStateStore
     let node = &graph.graph[pulse.target_node];
@@ -36,11 +36,11 @@ pub fn execute_and_propagate(
     let result = match node.execute(&pulse.target_port, pulse.payload.clone(), pulse.trace_id, state_store) {
         Ok(res) => res,
         Err(e) => {
-            // Record error in tracker
+            // Record error in tracker (wrap as RuntimeError::Other)
             if let Some(err_mutex) = trace_errors.get(&pulse.trace_id) {
                 let mut lock = err_mutex.lock().unwrap();
                 if lock.is_none() {
-                    *lock = Some(e.clone());
+                    *lock = Some(crate::runtime::error::RuntimeError::Other(e.clone()));
                 }
             }
             return Err(e);

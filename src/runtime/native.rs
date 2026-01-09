@@ -15,5 +15,5 @@ pub struct NativeContext<'a> {
 pub trait NativeNode: Debug + Send + Sync {
     /// Execute the node logic given an input on a specific port
     /// Returns a list of (output_port, value) tuples to emit
-    fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, String>;
+    fn on_input(&self, port: &str, value: Value, ctx: &NativeContext) -> Result<Vec<(String, Value)>, crate::runtime::error::RuntimeError>;
 }

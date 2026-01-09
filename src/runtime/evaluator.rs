@@ -5,14 +5,37 @@
 use crate::runtime::value::Value;
 use crate::ast::{Expression, BinaryOperator, Pattern};
 use std::collections::HashMap;
+use thiserror::Error;
+
+/// Strongly-typed evaluator errors
+#[derive(Error, Debug)]
+pub enum EvalError {
+    #[error("Variable not found: {0}")]
+    VariableNotFound(String),
+
+    #[error("Type error: {0}")]
+    TypeError(String),
+
+    #[error("Division by zero")]
+    DivisionByZero,
+
+    #[error("Unsupported operation or type mismatch: {0}")]
+    Unsupported(String),
+
+    #[error("Guard must evaluate to boolean")]
+    GuardNotBool,
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+}
 
 /// Evaluate an expression given a scope and properties.
-/// Returns a runtime `Value` or a string error.
+/// Returns a runtime `Value` or an `EvalError`.
 pub fn evaluate_expression(
     expr: &Expression,
     scope: &HashMap<String, Value>,
     properties: &HashMap<String, Value>,
-) -> Result<Value, String> {
+) -> Result<Value, EvalError> {
     match expr {
         Expression::IntLiteral(i) => Ok(Value::Int(*i)),
         Expression::FloatLiteral(f) => Ok(Value::Float(*f)),
@@ -22,7 +45,7 @@ pub fn evaluate_expression(
             scope.get(name)
                 .cloned()
                 .or_else(|| properties.get(name).cloned())
-                .ok_or_else(|| format!("Variable '{}' not found in scope or properties", name))
+                .ok_or_else(|| EvalError::VariableNotFound(name.clone()))
         }
         Expression::BinaryOp { op, left, right } => {
             let l_val = evaluate_expression(left, scope, properties)?;
@@ -30,17 +53,21 @@ pub fn evaluate_expression(
             evaluate_binary_op(*op, l_val, r_val)
         }
         // Other expression types not implemented yet
-        _ => Err(format!("Expression type {:?} not implemented yet", expr)),
+        _ => Err(EvalError::NotImplemented(format!("{:?}", expr))),
     }
 }
 
-pub(crate) fn evaluate_binary_op(op: BinaryOperator, left: Value, right: Value) -> Result<Value, String> {
+pub(crate) fn evaluate_binary_op(op: BinaryOperator, left: Value, right: Value) -> Result<Value, EvalError> {
+    // keep clones for error reporting (values moved into match arms)
+    let left_clone = left.clone();
+    let right_clone = right.clone();
+
     match (op, left, right) {
         (BinaryOperator::Add, Value::Int(l), Value::Int(r)) => Ok(Value::Int(l + r)),
         (BinaryOperator::Subtract, Value::Int(l), Value::Int(r)) => Ok(Value::Int(l - r)),
         (BinaryOperator::Multiply, Value::Int(l), Value::Int(r)) => Ok(Value::Int(l * r)),
         (BinaryOperator::Divide, Value::Int(l), Value::Int(r)) => {
-             if r == 0 { Err("Division by zero".to_string()) } else { Ok(Value::Int(l / r)) }
+             if r == 0 { Err(EvalError::DivisionByZero) } else { Ok(Value::Int(l / r)) }
         },
         (BinaryOperator::Add, Value::String(l), Value::String(r)) => Ok(Value::String(l + &r)),
         (BinaryOperator::Add, Value::String(l), Value::Int(r)) => Ok(Value::String(format!("{}{}", l, r))),
@@ -57,7 +84,7 @@ pub(crate) fn evaluate_binary_op(op: BinaryOperator, left: Value, right: Value) 
         // Bool comparisons
         (BinaryOperator::Equal, Value::Bool(l), Value::Bool(r)) => Ok(Value::Bool(l == r)),
         (BinaryOperator::NotEqual, Value::Bool(l), Value::Bool(r)) => Ok(Value::Bool(l != r)),
-        _ => Err("Unsupported binary operation or type mismatch".to_string()),
+        _ => Err(EvalError::Unsupported(format!("op={:?} left={:?} right={:?}", op, left_clone, right_clone))),
     }
 }
 
@@ -68,7 +95,7 @@ pub fn match_pattern(
     pattern: &Pattern,
     value: &Value,
     bindings: &mut HashMap<String, Value>,
-) -> Result<bool, String> {
+) -> Result<bool, EvalError> {
     // Reuse the same logic as before in node.rs
     let result = match pattern {
         Pattern::Wildcard => Ok(true),
@@ -100,13 +127,13 @@ pub fn match_pattern(
     result
 }
 
-fn pattern_expr_to_value(expr: &Expression) -> Result<Value, String> {
+fn pattern_expr_to_value(expr: &Expression) -> Result<Value, EvalError> {
     match expr {
         Expression::IntLiteral(i) => Ok(Value::Int(*i)),
         Expression::FloatLiteral(f) => Ok(Value::Float(*f)),
         Expression::StringLiteral(s) => Ok(Value::String(s.clone())),
         Expression::BoolLiteral(b) => Ok(Value::Bool(*b)),
-        _ => Err("Only literal values allowed in patterns".to_string()),
+        _ => Err(EvalError::NotImplemented("pattern literal type".to_string())),
     }
 }
 

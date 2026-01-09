@@ -110,7 +110,10 @@ impl RuntimeNode {
                     
                     // Execute statements
                     for stmt in &process.statements {
-                        Self::execute_statement(stmt, &mut scope, properties, &mut outputs)?;
+                        match Self::execute_statement(stmt, &mut scope, properties, &mut outputs) {
+                            Ok(_) => {},
+                            Err(e) => return Err(e.to_string()),
+                        }
                     }
 
                         // CONSUME inputs to prevent double-firing (Implicit synchronization)
@@ -146,7 +149,7 @@ impl RuntimeNode {
         }
     }
 
-    pub(crate) fn evaluate_expression(expr: &Expression, scope: &HashMap<String, Value>, properties: &HashMap<String, Value>) -> Result<Value, String> {
+    pub(crate) fn evaluate_expression(expr: &Expression, scope: &HashMap<String, Value>, properties: &HashMap<String, Value>) -> Result<Value, crate::runtime::evaluator::EvalError> {
         crate::runtime::evaluator::evaluate_expression(expr, scope, properties)
     }
 
@@ -155,7 +158,7 @@ impl RuntimeNode {
         pattern: &Pattern,
         value: &Value,
         bindings: &mut HashMap<String, Value>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, crate::runtime::evaluator::EvalError> {
         crate::runtime::evaluator::match_pattern(pattern, value, bindings)
     }
 
@@ -175,7 +178,7 @@ impl RuntimeNode {
         crate::runtime::evaluator::values_equal(a, b)
     }
 
-    fn evaluate_binary_op(op: BinaryOperator, left: Value, right: Value) -> Result<Value, String> {
+    fn evaluate_binary_op(op: BinaryOperator, left: Value, right: Value) -> Result<Value, crate::runtime::evaluator::EvalError> {
         crate::runtime::evaluator::evaluate_binary_op(op, left, right)
     }
     
@@ -185,7 +188,7 @@ impl RuntimeNode {
         scope: &mut HashMap<String, Value>,
         properties: &HashMap<String, Value>,
         outputs: &mut Vec<(String, Value)>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::runtime::evaluator::EvalError> {
         match stmt {
             Statement::Emit { port, value } => {
                 let val = Self::evaluate_expression(value, scope, properties)?;
@@ -213,7 +216,7 @@ impl RuntimeNode {
         scope: &mut HashMap<String, Value>,
         properties: &HashMap<String, Value>,
         outputs: &mut Vec<(String, Value)>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::runtime::evaluator::EvalError> {
         verbose!("[MATCH] Matching value {:?} against {} arms", value, arms.len());
         for (i, arm) in arms.iter().enumerate() {
             // Create a temporary scope for pattern bindings
@@ -229,12 +232,10 @@ impl RuntimeNode {
                     match guard_result {
                         Value::Bool(true) => {}
                         Value::Bool(false) => continue, // Guard failed, try next arm
-                        _ => return Err("Guard must evaluate to boolean".to_string()),
+                        _ => return Err(crate::runtime::evaluator::EvalError::GuardNotBool),
                     }
                 }
-                
-                // Execute the arm's body statements
-                verbose!("[MATCH] Executing {} statements", arm.body.len());
+
                 for stmt in &arm.body {
                     Self::execute_statement(stmt, &mut arm_scope, properties, outputs)?;
                 }

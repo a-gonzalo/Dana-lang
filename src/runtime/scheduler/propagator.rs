@@ -61,8 +61,12 @@ pub fn propagate_from_port(
                          verbose!("[PROP {}] Guard failed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
                          continue;
                      },
-                     _ => {
-                         verbose!("[PROP {}] Guard error for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                     Ok(_) => {
+                         verbose!("[PROP {}] Guard error (non-bool) for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
+                         continue;
+                     },
+                     Err(err) => {
+                         verbose!("[PROP {}] Guard evaluation error for {}.{} -> {}.{}: {}", trace_id, source_node_name, source_port, target_node_name, target_port, err);
                          continue;
                      }
                  }

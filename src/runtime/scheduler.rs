@@ -108,7 +108,7 @@ impl Scheduler {
     /// Run the scheduler until all traces are finished
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         // Use single-threaded execution for deterministic debugging
-        let num_workers = 1; // thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let num_workers =  thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let mut workers = Vec::new();
 
         for _ in 0..num_workers {

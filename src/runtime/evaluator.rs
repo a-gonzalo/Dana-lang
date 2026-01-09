@@ -165,4 +165,48 @@ mod tests {
         let mut bindings = std::collections::HashMap::new();
         assert!(match_pattern(&pattern, &Value::Int(3), &mut bindings).unwrap());
     }
+
+    #[test]
+    fn test_binary_add_type_mismatch() {
+        use crate::ast::BinaryOperator;
+        let res = evaluate_binary_op(BinaryOperator::Add, Value::Int(1), Value::String("x".to_string()));
+        assert!(matches!(res, Err(EvalError::Unsupported(_))));
+    }
+
+    #[test]
+    fn test_divide_by_zero() {
+        use crate::ast::BinaryOperator;
+        let res = evaluate_binary_op(BinaryOperator::Divide, Value::Int(4), Value::Int(0));
+        assert!(matches!(res, Err(EvalError::DivisionByZero)));
+    }
+
+    #[test]
+    fn test_variable_not_found() {
+        use crate::ast::Expression;
+        let scope = std::collections::HashMap::new();
+        let props = std::collections::HashMap::new();
+        let expr = Expression::Identifier("x".to_string());
+        let res = evaluate_expression(&expr, &scope, &props);
+        assert!(matches!(res, Err(EvalError::VariableNotFound(name)) if name == "x"));
+    }
+
+    #[test]
+    fn test_string_plus_int_concat() {
+        use crate::ast::BinaryOperator;
+        let res = evaluate_binary_op(BinaryOperator::Add, Value::String("x".to_string()), Value::Int(3)).unwrap();
+        assert_eq!(res, Value::String("x3".to_string()));
+    }
+
+    #[test]
+    fn test_pattern_binding_and_tuple_mismatch() {
+        use crate::ast::Pattern;
+        let mut bindings = std::collections::HashMap::new();
+        let pat = Pattern::Binding("a".to_string());
+        assert!(match_pattern(&pat, &Value::Int(7), &mut bindings).unwrap());
+        assert_eq!(bindings.get("a").unwrap(), &Value::Int(7));
+
+        let pat_tuple = Pattern::Tuple(vec![Pattern::Literal(crate::ast::Expression::IntLiteral(1)), Pattern::Wildcard]);
+        let mut binds2 = std::collections::HashMap::new();
+        assert!(!match_pattern(&pat_tuple, &Value::Tuple(vec![Value::Int(1)]), &mut binds2).unwrap()); // length mismatch
+    }
 }

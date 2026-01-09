@@ -134,4 +134,13 @@ mod tests {
         // Invalid conversion
         assert!(v.convert_to(&DanaType::String).is_err());
     }
+
+    #[test]
+    fn test_list_get_type() {
+        let empty_list = Value::List(vec![]);
+        assert_eq!(empty_list.get_type(), DanaType::List(Box::new(DanaType::Any)));
+
+        let list_int = Value::List(vec![Value::Int(1), Value::Int(2)]);
+        assert_eq!(list_int.get_type(), DanaType::List(Box::new(DanaType::Int)));
+    }
 }

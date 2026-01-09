@@ -155,4 +155,29 @@ mod tests {
             "Stream<Int>"
         );
     }
+
+    #[test]
+    fn test_list_compatibility() {
+        let list_int = DanaType::List(Box::new(DanaType::Int));
+        let list_int2 = DanaType::List(Box::new(DanaType::Int));
+        let list_string = DanaType::List(Box::new(DanaType::String));
+
+        assert!(TypeChecker::are_compatible(&list_int, &list_int2));
+        assert!(!TypeChecker::are_compatible(&list_int, &list_string));
+    }
+
+    #[test]
+    fn test_validate_edge_error() {
+        let res = TypeChecker::validate_edge(&DanaType::Int, &DanaType::String);
+        assert!(res.is_err());
+        if let Err(e) = res {
+            match e {
+                TypeError::IncompatibleEdge(from, to) => {
+                    assert_eq!(from, "Int");
+                    assert_eq!(to, "String");
+                }
+                _ => panic!("expected IncompatibleEdge"),
+            }
+        }
+    }
 }

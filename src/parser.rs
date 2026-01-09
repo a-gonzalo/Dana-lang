@@ -892,4 +892,14 @@ mod tests {
         assert_eq!(subgraph.edges[0].target.node, "Output");
         assert_eq!(subgraph.edges[0].target.port, "new_data");
     }
+
+    #[test]
+    fn test_parse_invalid_syntax() {
+        let input = r#"
+            node Bad {
+                in x: Int
+        "#;
+        let res = parse_file(input);
+        assert!(res.is_err());
+    }
 }

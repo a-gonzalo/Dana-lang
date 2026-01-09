@@ -511,7 +511,10 @@ mod tests {
         
         assert!(res.is_err(), "Guard should Pass 15. Result Err means Failer WAS reached.");
         let err = res.err().unwrap();
-        assert_eq!(err.to_string(), "FailNode executed");
+        match err {
+            crate::runtime::error::RuntimeError::Native(ref s) => assert_eq!(s, "FailNode executed"),
+            other => panic!("expected Native error, got {:?}", other),
+        }
     }
 
     #[test]
@@ -551,7 +554,10 @@ mod tests {
         
         assert!(res.is_err(), "Infinite loop should be detected and return Err");
         let err = res.err().unwrap();
-        assert!(err.to_string().contains("Max execution depth reached"));
+        match err {
+            crate::runtime::error::RuntimeError::Scheduler(ref msg) => assert!(msg.contains("Max execution depth reached")),
+            other => panic!("expected Scheduler error, got {:?}", other),
+        }
     }
 
     #[test]

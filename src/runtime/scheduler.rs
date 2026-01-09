@@ -20,51 +20,12 @@ use std::sync::Mutex;
 
 const MAX_DEPTH: u32 = 1000;
 
-/// The state store for ephemeral trace-local data
-/// Key: (TraceId, NodeIndex) -> State of that node for that trace
-pub struct TraceStateStore {
-    states: RwLock<HashMap<(TraceId, NodeIndex), HashMap<String, Value>>>,
-    /// Tracks which nodes have executed at least once for each trace
-    /// Used to determine if constant injection should happen
-    executed_nodes: RwLock<HashSet<(TraceId, NodeIndex)>>,
-}
+pub mod state;
 
-impl TraceStateStore {
-    pub fn new() -> Self {
-        Self {
-            states: RwLock::new(HashMap::new()),
-            executed_nodes: RwLock::new(HashSet::new()),
-        }
-    }
+pub use state::TraceStateStore;
 
-    pub fn get_node_state(&self, trace_id: TraceId, node_idx: NodeIndex) -> Option<HashMap<String, Value>> {
-        let lock = self.states.read().unwrap();
-        lock.get(&(trace_id, node_idx)).cloned()
-    }
-
-    pub fn set_node_state(&self, trace_id: TraceId, node_idx: NodeIndex, state: HashMap<String, Value>) {
-        let mut lock = self.states.write().unwrap();
-        lock.insert((trace_id, node_idx), state);
-    }
-    
-    pub fn has_node_executed(&self, trace_id: TraceId, node_idx: NodeIndex) -> bool {
-        let lock = self.executed_nodes.read().unwrap();
-        lock.contains(&(trace_id, node_idx))
-    }
-    
-    pub fn mark_node_executed(&self, trace_id: TraceId, node_idx: NodeIndex) {
-        let mut lock = self.executed_nodes.write().unwrap();
-        lock.insert((trace_id, node_idx));
-    }
-    
-    pub fn clear_trace(&self, trace_id: TraceId) {
-        let mut lock = self.states.write().unwrap();
-        lock.retain(|(tid, _), _| *tid != trace_id);
-        
-        let mut exec_lock = self.executed_nodes.write().unwrap();
-        exec_lock.retain(|(tid, _)| *tid != trace_id);
-    }
-}
+pub mod propagator;
+pub mod executor;
 
 pub struct Scheduler {
     graph: Arc<ExecutableGraph>,
@@ -260,64 +221,7 @@ impl Scheduler {
         tracker: &Arc<DashMap<TraceId, Arc<AtomicUsize>>>,
         trace_errors: &Arc<DashMap<TraceId, Arc<Mutex<Option<String>>>>>
     ) -> Result<(), String> {
-        // 1. Get current node state from TraceStateStore
-        let node = &graph.graph[pulse.target_node];
-        let trace_state = state_store.get_node_state(pulse.trace_id, pulse.target_node)
-            .unwrap_or_else(HashMap::new);
-
-        verbose!("[EXEC {}] Node '{}' received on port '{}' with value {:?} (depth={})", pulse.trace_id, node.name, pulse.target_port, pulse.payload, pulse.depth);
-
-        // NOTE: Constant injection disabled - it causes race conditions when constant nodes
-        // also send pulses via auto_trigger. The pulses from constant nodes are sufficient.
-        // Self::inject_constant_inputs(pulse.target_node, pulse.trace_id, &pulse.target_port, graph, state_store);
-
-        // 2. Execute the target node
-        let result = match node.execute(&pulse.target_port, pulse.payload.clone(), pulse.trace_id, state_store) {
-            Ok(res) => res,
-            Err(e) => {
-                // Record error in tracker
-                if let Some(err_mutex) = trace_errors.get(&pulse.trace_id) {
-                    let mut lock = err_mutex.lock().unwrap();
-                    if lock.is_none() {
-                        *lock = Some(e.clone());
-                    }
-                }
-                return Err(e);
-            }
-        };
-
-        verbose!("[EXEC {}] Node '{}' produced {} outputs", pulse.trace_id, node.name, result.outputs.len());
-
-        // Mark this node as having executed (for constant injection logic)
-        if !result.outputs.is_empty() {
-            state_store.mark_node_executed(pulse.trace_id, pulse.target_node);
-        }
-
-        // Build a map of all outputs for guard evaluation
-        let outputs_map: HashMap<String, Value> = result.outputs.iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-
-        // 3. Propagate outputs to connected downstream nodes
-        for (out_port, out_value) in result.outputs {
-            Self::propagate_from_port(
-                pulse.target_node,
-                &out_port,
-                &out_value,
-                &outputs_map, // Pass all outputs for guard evaluation
-                graph,
-                tx,
-                tracker,
-                pulse.trace_id,
-                pulse.depth
-            );
-        }
-
-        // NOTE: We intentionally do NOT propagate the input value itself here.
-        // If a node needs to "fork" its input to multiple destinations, it should
-        // explicitly emit it as an output. This prevents duplicate propagation.
-
-        Ok(())
+        executor::execute_and_propagate(pulse, graph, state_store, tx, tracker, trace_errors)
     }
 
     fn propagate_from_port(
@@ -331,104 +235,7 @@ impl Scheduler {
         trace_id: TraceId,
         depth: u32
     ) {
-        let source_node_name = &graph.graph[source_idx].name;
-        let mut outgoing_pulses = Vec::new();
-        
-        for edge in graph.graph.edges_directed(source_idx, Direction::Outgoing) {
-             if edge.weight().source_port == source_port {
-                 let target_idx = edge.target();
-                 let target_node = &graph.graph[target_idx];
-                 let target_node_name = &target_node.name;
-                 let target_port = &edge.weight().target_port;
-                 
-                 // Guard check
-                 if let Some(guard) = &edge.weight().guard {
-                     let source_node = &graph.graph[source_idx];
-                     let properties = match &source_node.kind {
-                         NodeKind::DanaProcess { properties, .. } => Some(properties),
-                         _ => None,
-                     };
-                     
-                     let empty_props = HashMap::new();
-                     let props_ref = properties.unwrap_or(&empty_props);
-
-                     // Build scope with current value and all outputs for guard evaluation
-                     let mut scope = HashMap::new();
-                     scope.insert(source_port.to_string(), value.clone());
-                     for (k, v) in all_outputs {
-                         scope.insert(k.clone(), v.clone());
-                     }
-
-                     match RuntimeNode::evaluate_expression(&guard.condition, &scope, props_ref) {
-                         Ok(Value::Bool(true)) => {
-                             verbose!("[PROP {}] Guard passed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
-                         },
-                         Ok(Value::Bool(false)) => {
-                             verbose!("[PROP {}] Guard failed for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
-                             continue;
-                         },
-                         _ => {
-                             verbose!("[PROP {}] Guard error for {}.{} -> {}.{}", trace_id, source_node_name, source_port, target_node_name, target_port);
-                             continue;
-                         }
-                     }
-                 } else {
-                     verbose!("[PROP {}] Propagating {}.{} -> {}.{} with value {:?}", trace_id, source_node_name, source_port, target_node_name, target_port, value);
-                 }
-                 outgoing_pulses.push((target_idx, target_port.clone()));
-             }
-        }
-
-        // Update tracker with new pulses BEFORE sending them
-        if !outgoing_pulses.is_empty() {
-            if let Some(counter) = tracker.get(&trace_id) {
-                counter.fetch_add(outgoing_pulses.len(), Ordering::SeqCst);
-            }
-
-            for (target_idx, target_port) in outgoing_pulses {
-                let target_node_name = &graph.graph[target_idx].name;
-                let target_node = &graph.graph[target_idx];
-                
-                // Simple depth increment for loop detection only
-                let next_depth = depth + 1;
-                
-                verbose!("[SEND {}] Pulse sent to {}.{} (depth={})", trace_id, target_node_name, target_port, next_depth);
-                let _ = tx.send(Pulse::new(
-                    trace_id,
-                    target_idx,
-                    target_port.clone(),
-                    value.clone(),
-                    next_depth,
-                ));
-                
-                // For virtual nodes (subgraphs), when a pulse arrives at a port that is ALSO an output,
-                // automatically propagate it downstream. This enables patterns like:
-                // internal_node.result -> subgraph.result -> downstream_node
-                // 
-                // Key insight: We check if the port is in output_ports AND we're sending TO an input port
-                // to avoid infinite recursion. The auto-propagation happens when we reach an OUTPUT port.
-                if matches!(&target_node.kind, NodeKind::DanaProcess { process, .. } if process.is_none()) {
-                    // This is a virtual node (subgraph)
-                    if target_node.output_ports.contains_key(&target_port) {
-                        verbose!("[AUTO] Virtual node '{}' has output port '{}', auto-propagating downstream", target_node_name, target_port);
-                        
-                        Self::propagate_from_port(
-                            target_idx,
-                            &target_port,
-                            value,
-                            &HashMap::new(),
-                            graph,
-                            tx,
-                            tracker,
-                            trace_id,
-                            next_depth
-                        );
-                    }
-                }
-            }
-        } else {
-            verbose!("[PROP {}] No outgoing pulses from {}.{}", trace_id, source_node_name, source_port);
-        }
+        propagator::propagate_from_port(source_idx, source_port, value, all_outputs, graph, tx, tracker, trace_id, depth);
     }
 
     /// Inject constant values into a node's state before execution

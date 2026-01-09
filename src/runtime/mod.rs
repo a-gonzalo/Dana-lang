@@ -3,6 +3,7 @@
 //! Exposes runtime building blocks used to execute `ExecutableGraph` instances.
 pub mod value;
 pub mod node;
+pub mod evaluator;
 pub mod scheduler;
 pub mod native;
 pub mod pulse;
